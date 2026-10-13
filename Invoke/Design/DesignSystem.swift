@@ -17,13 +17,13 @@ struct InvokeTheme: Identifiable, Equatable {
     static let velvet = InvokeTheme(id: "velvet", name: "Velvet Observatory", subtitle: "Same sky. Different possibilities.", background: Color(hex: 0x170F18), surface: Color(hex: 0x281D2C), text: Color(hex: 0xF4E8DC), secondary: Color(hex: 0xC6B5C7), accent: Color(hex: 0xE0BEC5), border: Color(hex: 0x776277), button: Color(hex: 0xE9D8C4), buttonText: Color(hex: 0x291C2A))
     static let astral = InvokeTheme(id: "astral", name: "Astral Theatre", subtitle: "The stage is yours. Begin quietly.", background: Color(hex: 0x101422), surface: Color(hex: 0x202237), text: Color(hex: 0xF7E5DE), secondary: Color(hex: 0xC3BDD4), accent: Color(hex: 0xF5AC91), border: Color(hex: 0x7C7188), button: Color(hex: 0xB63D24), buttonText: Color(hex: 0xFFF7EC))
     static let all: [InvokeTheme] = [.ink, .velvet, .astral]
-    static func named(_ id: String) -> InvokeTheme { all.first { $0.id == id } ?? .ink }
+    static func named(_ id: String) -> InvokeTheme { all.first { $0.id == id } ?? .astral }
 }
 
 extension Color {
     init(hex: UInt32) { self.init(.sRGB, red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255, opacity: 1) }
 }
-private struct ThemeKey: EnvironmentKey { static let defaultValue = InvokeTheme.ink }
+private struct ThemeKey: EnvironmentKey { static let defaultValue = InvokeTheme.astral }
 extension EnvironmentValues {
     var invokeTheme: InvokeTheme { get { self[ThemeKey.self] } set { self[ThemeKey.self] = newValue } }
 }
@@ -69,11 +69,47 @@ struct InvokePrimaryButton: View {
     let action: () -> Void
     @Environment(\.invokeTheme) private var theme
     @EnvironmentObject private var store: AppStore
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+    @State private var trigger = 0
+    @State private var origin = CGPoint(x: 0.5, y: 0.5)
+    @State private var size = CGSize(width: 1, height: 1)
+    @State private var touching = false
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) { Text(title).font(.headline); Spacer(minLength: 0); Image(systemName: "arrow.right") }
-        }.buttonStyle(InvokeEffectButtonStyle(theme: InvokeEffectTheme(rawValue: theme.id) ?? .ink, level: InvokeEffectLevel(rawValue: store.data.preferences.effects) ?? .subtle, background: theme.button, foreground: theme.buttonText))
+        if #available(iOS 26.0, *), store.data.preferences.glassStyle != "solid", !reduceTransparency, contrast != .increased {
+            Button {
+                if !touching { trigger += 1 }
+                action()
+            } label: {
+                label.padding(.vertical, 8)
+                    .background {
+                        EffectSurface(theme: effectTheme, level: effectLevel, trigger: trigger, kind: .button, origin: origin)
+                    }
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.onChange(of: geometry.size, initial: true) { _, value in size = value }
+                        }
+                    }
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
+            .tint(theme.button)
+            .foregroundStyle(theme.buttonText)
+            .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { value in
+                if !touching {
+                    origin = CGPoint(x: value.location.x / max(size.width, 1), y: value.location.y / max(size.height, 1))
+                    touching = true
+                    trigger += 1
+                }
+            }.onEnded { _ in touching = false })
+        } else {
+            Button(action: action) { label }
+                .buttonStyle(InvokeEffectButtonStyle(theme: effectTheme, level: effectLevel, background: theme.button, foreground: theme.buttonText))
+        }
     }
+    private var label: some View { HStack(spacing: 12) { Text(title).font(.headline); Spacer(minLength: 0); Image(systemName: "arrow.right") } }
+    private var effectTheme: InvokeEffectTheme { InvokeEffectTheme(rawValue: theme.id) ?? .astral }
+    private var effectLevel: InvokeEffectLevel { InvokeEffectLevel(rawValue: store.data.preferences.effects) ?? .subtle }
 }
 
 struct InvokePressStyle: ButtonStyle {
@@ -88,6 +124,7 @@ struct ProseField: View {
     let title: String
     @Binding var text: String
     var prompt: String = ""
+    var accessibilityID: String = ""
     @Environment(\.invokeTheme) private var theme
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -97,6 +134,7 @@ struct ProseField: View {
                 .lineLimit(3...14).padding(12).background(theme.surface, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.border, lineWidth: 0.7))
                 .accessibilityLabel(title)
+                .accessibilityIdentifier(accessibilityID.isEmpty ? title : accessibilityID)
         }.foregroundStyle(theme.text)
     }
 }
@@ -172,13 +210,79 @@ enum StoryLibrary {
 
 extension View {
     func invokeScreen() -> some View { modifier(InvokeScreenModifier()) }
+
+    /// Use for compact floating controls, never for a long reading or writing surface.
+    func invokeGlassControl<S: Shape>(in shape: S, interactive: Bool = true) -> some View {
+        modifier(InvokeGlassControlModifier(shape: shape, interactive: interactive))
+    }
 }
+
+enum InvokeGlassStyle: String, CaseIterable, Identifiable {
+    case system, tinted, solid
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .system: "System glass"
+        case .tinted: "Theme-tinted glass"
+        case .solid: "Solid surfaces"
+        }
+    }
+}
+
+private struct InvokeGlassControlModifier<S: Shape>: ViewModifier {
+    let shape: S
+    let interactive: Bool
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.invokeTheme) private var theme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), store.data.preferences.glassStyle != "solid", !reduceTransparency, contrast != .increased {
+            if store.data.preferences.glassStyle == "tinted" {
+                content.glassEffect(.regular.tint(theme.accent.opacity(0.22)).interactive(interactive && !reduceMotion), in: shape)
+            } else {
+                content.glassEffect(.regular.interactive(interactive && !reduceMotion), in: shape)
+            }
+        } else {
+            content.background(theme.surface, in: shape)
+                .overlay(shape.stroke(theme.border.opacity(contrast == .increased ? 1 : 0.7), lineWidth: contrast == .increased ? 1.5 : 0.7).allowsHitTesting(false))
+        }
+    }
+}
+
+/// Group nearby custom glass controls so the system can render them together.
+struct InvokeGlassGroup<Content: View>: View {
+    let spacing: CGFloat
+    private let content: () -> Content
+    init(spacing: CGFloat = 12, @ViewBuilder content: @escaping () -> Content) {
+        self.spacing = spacing
+        self.content = content
+    }
+    var body: some View {
+        if #available(iOS 26.0, *) { GlassEffectContainer(spacing: spacing) { content() } }
+        else { content() }
+    }
+}
+
 private struct InvokeScreenModifier: ViewModifier {
     @Environment(\.invokeTheme) private var theme
-    func body(content: Content) -> some View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), store.data.preferences.glassStyle != "solid", !reduceTransparency, contrast != .increased {
+            // Keep the system's real Liquid Glass navigation/tab bars unobscured.
+            base(content).toolbarColorScheme(theme.scheme, for: .navigationBar, .tabBar)
+        } else {
+            base(content).toolbarBackground(theme.background, for: .navigationBar, .tabBar)
+                .toolbarBackground(.visible, for: .navigationBar, .tabBar)
+                .toolbarColorScheme(theme.scheme, for: .navigationBar, .tabBar)
+        }
+    }
+    private func base(_ content: Content) -> some View {
         content.foregroundStyle(theme.text).tint(theme.accent).scrollContentBackground(.hidden).background(ScreenBackground())
-            .toolbarBackground(theme.background, for: .navigationBar, .tabBar)
-            .toolbarBackground(.visible, for: .navigationBar, .tabBar)
-            .toolbarColorScheme(theme.scheme, for: .navigationBar, .tabBar)
     }
 }

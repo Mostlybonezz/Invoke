@@ -19,13 +19,13 @@ check(project.count('{') == project.count('}'), 'Unbalanced Xcode project braces
 try:
     from openstep_parser import OpenStepDecoder
     parsed = OpenStepDecoder.ParseFromString(project)
-    check(len(parsed['objects'][parsed['rootObject']]['targets']) == 2, 'Expected app and XCTest targets')
+    check(len(parsed['objects'][parsed['rootObject']]['targets']) == 3, 'Expected app, unit test, and UI test targets')
 except ImportError:
     pass
 definitions = re.findall(r'^\s*([A-F0-9]{24}) = \{ isa = ', project, re.M)
 check(len(definitions) == len(set(definitions)), 'Duplicate project object IDs')
 check(set(re.findall(r'\b[A-F0-9]{24}\b', project)).issubset(set(definitions)), 'Unresolved project object ID')
-swift = sorted((ROOT/'Invoke').rglob('*.swift')) + sorted((ROOT/'InvokeTests').glob('*.swift'))
+swift = sorted((ROOT/'Invoke').rglob('*.swift')) + sorted((ROOT/'InvokeTests').glob('*.swift')) + sorted((ROOT/'InvokeUITests').glob('*.swift'))
 metal = list((ROOT/'Invoke').rglob('*.metal'))
 for path in swift + metal:
     rel = path.relative_to(ROOT).as_posix()
@@ -64,7 +64,7 @@ try:
 except ImportError:
     pass
 
-test_count = sum(len(re.findall(r'func test\w+\(', p.read_text())) for p in (ROOT/'InvokeTests').glob('*.swift'))
+test_count = sum(len(re.findall(r'func test\w+\(', p.read_text())) for folder in ['InvokeTests', 'InvokeUITests'] for p in (ROOT/folder).glob('*.swift'))
 print(f'Package checks: {len(swift)} Swift files, {len(metal)} Metal file(s), {test_count} authored XCTest methods.')
 print('Swift syntax: ' + syntax)
 print('Swift compilation, Metal compilation, simulator/device testing, and XCTest execution: NOT RUN.')

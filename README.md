@@ -14,13 +14,13 @@ See [LiveContainer setup](docs/LIVECONTAINER.md) for adding the source or import
 
 ## Open and run
 
-1. On a Mac, open **Invoke.xcodeproj** in **Xcode 16 or later**. No package manager or third-party runtime dependency is needed.
+1. On a Mac, open **Invoke.xcodeproj** in **Xcode 27 or later**. No package manager or third-party runtime dependency is needed.
 2. Select the **Invoke** scheme and an iPhone simulator running iOS 17 or later. Build and Run.
 3. For a physical iPhone, select your development team in Signing & Capabilities and replace `app.invoke.personal` with an available bundle identifier. No signing identity is included.
 4. Open Settings → Appearance → **Try button & card effects** first to validate the native shader prototype. See [Shader mapping](docs/Shader-Mapping.md).
 5. Run Product → Test for the included XCTest target. Complete the device checks in [Testing](docs/TESTING.md) before relying on the app for irreplaceable writing.
 
-The deployment target is **iOS 17.0**, portrait iPhone. Ink & Omen and Subtle effects are explicit first-launch defaults, even when the device uses Dark Mode. Xcode previews in `Invoke/App/InvokePreviews.swift` cover all three themes and larger text; they have not been rendered here.
+The deployment target is **iOS 17.0**, portrait iPhone. Astral Theatre and Subtle effects are explicit first-launch defaults, Existing installations retain their saved theme. The indigo and orange icon matches Astral Theatre. Xcode previews in `Invoke/App/InvokePreviews.swift` cover all three themes and larger text; they have not been rendered here.
 
 Example command on a Mac, substituting an installed simulator's identifier:
 
@@ -29,6 +29,16 @@ xcodebuild -project Invoke.xcodeproj -scheme Invoke \
   -destination 'platform=iOS Simulator,id=YOUR_SIMULATOR_UDID' \
   -derivedDataPath build/DerivedData test
 ```
+
+## New in 1.1.0
+
+- Tap Sanctuary’s constellation to zoom into a chapter map. Tap a labeled star to zoom into its scene script, intended action, cue, smaller version, and reflections. Use the chapter selector, page controls, or readable scene list to reach every scene.
+- Astral Theatre is the new-install default; saved themes and version 1 writing/backups are preserved.
+- Native Liquid Glass controls and system bars on iOS 26 and later, with solid alternatives for older systems and accessibility preferences.
+- Settings → Appearance offers system, tinted, or solid surfaces, plus theme-matched/Ripples/Beam/Sparkle effects, intensity, speed, and a live replay preview.
+- The release workflow requires Xcode 27.0, the iOS 27.0 device SDK, and an exact iOS 27.0 simulator. The iOS 17 minimum is retained; a minimum deployment version is not an upper OS limit.
+
+Version 1.1.0 native verification is pending its release run; the historical 1.0.0 evidence below applies only to that release.
 
 ## Implemented in source
 
@@ -43,7 +53,7 @@ xcodebuild -project Invoke.xcodeproj -scheme Invoke \
 - Local versioned autosaving, protected image storage, previous-snapshot recovery, validated complete portable backups, explicit restore confirmation, and recovery copies.
 - Metal adaptations of the required repository's Ripples, Beam, and Sparkle kernels. Native controls and text remain separate from the decoration. Off, Reduce Motion, Low Power Mode, and inactivity use static alternatives.
 
-## Verification performed here
+## Historical 1.0.0 verification
 
 Initial source preparation and checks ran on Windows. [GitHub Actions run 38343056754](https://github.com/Mostlybonezz/Invoke/actions/runs/38343056754) subsequently compiled the Swift and Metal sources for the simulator and arm64 iOS Release target using **Xcode 16.4 (16F6)**. On the **iOS 18.5 simulator, all 21 XCTest cases passed with zero failures**: 14 persistence/library tests and 7 story-flow tests.
 
@@ -69,7 +79,8 @@ Metal compilation passed. The shader rendering and interaction checks remain ope
 | `Invoke/Stories` | Authoring, scenes, reflection, connections, constellations, keepsakes |
 | `Invoke/Library` | Grimoire, relic workshop, photo display, PDF/share/print |
 | `Invoke/Effects` | Native Metal source, finite rendering wrapper, prototype, MIT notice |
-| `InvokeTests` | XCTest source and integration cases |
+| `InvokeTests` | Persistence, migration, and story-flow tests |
+| `InvokeUITests` | Native constellation navigation, scene editing, and theme checks |
 | `ThirdParty` | Pinned original shader source, license, manifest |
 | `DesignReferences` (local delivery only) | Original supplied visual references; omitted from the public repository and never used as app UI |
 | `Tools` | Repeatable project generation, icon rendering, portable source checks |

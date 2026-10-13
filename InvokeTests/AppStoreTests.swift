@@ -24,7 +24,7 @@ final class AppStoreTests: XCTestCase {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = AppStore(directory: directory)
-        XCTAssertEqual(store.data.preferences.theme, "ink")
+        XCTAssertEqual(store.data.preferences.theme, "astral")
         XCTAssertEqual(store.data.preferences.effects, "subtle")
         XCTAssertFalse(store.data.preferences.onboardingComplete)
         XCTAssertTrue(store.data.stories.isEmpty)
@@ -192,7 +192,7 @@ final class AppStoreTests: XCTestCase {
         try BackupValidation.validateRecords(data)
         XCTAssertEqual(data.stories.count, 3)
         XCTAssertEqual(data.scenes.filter { $0.status == "Experienced" }.count, 3)
-        XCTAssertEqual(data.preferences.theme, "ink")
+        XCTAssertEqual(data.preferences.theme, "astral")
         XCTAssertEqual(data.preferences.effects, "subtle")
     }
 
@@ -238,7 +238,7 @@ final class AppStoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = AppStore(directory: directory)
         store.data.preferences.theme = "velvet"
-        store.data.preferences.theme = "ink"
+        store.data.preferences.theme = "astral"
         store.flush()
         XCTAssertEqual(store.saveState, "Saved on this iPhone")
     }

@@ -49,39 +49,39 @@ func narrativeTemplate(_ story: Story) -> String {
 struct ConstellationView: View {
     let scenes: [Scene]
     var trigger = 0
+    var storyID: UUID? = nil
     @EnvironmentObject private var store: AppStore
     @Environment(\.invokeTheme) private var theme
-    private var plotted: [Scene] { Array(scenes.filter { !$0.archived }.prefix(9)) }
-    private func point(_ i: Int, width: CGFloat) -> CGPoint { CGPoint(x: 22 + CGFloat(i) / CGFloat(max(plotted.count - 1, 1)) * max(width - 44, 1), y: [64.0, 32.0, 54.0, 24.0, 69.0, 47.0, 22.0, 58.0, 36.0][i % 9]) }
+    @Namespace private var constellationZoom
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            GeometryReader { geo in
-                ZStack {
-                    Path { p in
-                        for i in plotted.indices { let pt = point(i, width: geo.size.width); if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) } }
-                    }.stroke(theme.border, lineWidth: 0.8)
-                    ForEach(Array(plotted.enumerated()), id: \.element.id) { i, scene in
-                        NavigationLink { SceneDetailView(sceneID: scene.id) } label: {
-                            Image(systemName: scene.status == "Experienced" ? "sparkle" : "circle")
-                                .font(.system(size: scene.status == "Experienced" ? 17 : 10))
-                                .foregroundStyle(scene.status == "Experienced" ? theme.accent : theme.secondary)
-                                .frame(width: 44, height: 44)
-                        }.position(point(i, width: geo.size.width))
-                            .accessibilityLabel("\(scene.title), \(scene.status)")
-                    }
-                    EffectSurface(theme: InvokeEffectTheme(rawValue: theme.id) ?? .ink, level: InvokeEffectLevel(rawValue: store.data.preferences.effects) ?? .subtle, trigger: trigger, kind: .record)
+        NavigationLink {
+            ConstellationExplorerView(storyID: storyID ?? scenes.first?.storyID, fallbackSceneIDs: scenes.map(\.id))
+                .modifier(ConstellationZoomDestination(id: "story-constellation", namespace: constellationZoom))
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    SectionEyebrow(text: "Your constellation")
+                    Spacer()
+                    Image(systemName: "arrow.up.left.and.arrow.down.right").font(.caption).foregroundStyle(theme.secondary)
                 }
-            }.frame(height: 88)
-            Text("\(scenes.filter { $0.status == "Experienced" && !$0.archived }.count) scenes lived").font(.subheadline).foregroundStyle(theme.secondary)
-            if scenes.count > 9 { Text("Showing the first nine points. Every scene is in the list below.").font(.caption).foregroundStyle(theme.secondary) }
-            DisclosureGroup("Scenes as a list") {
-                ForEach(scenes.filter { !$0.archived }) { scene in
-                    NavigationLink { SceneDetailView(sceneID: scene.id) } label: {
-                        Label("\(scene.title) · \(scene.status)", systemImage: scene.status == "Experienced" ? "checkmark.circle" : "circle").font(.subheadline).padding(.vertical, 6)
-                    }
-                }
-            }.font(.subheadline)
+                ConstellationMiniature(scenes: scenes)
+                    .background(EffectSurface(theme: InvokeEffectTheme(rawValue: theme.id) ?? .ink, level: InvokeEffectLevel(rawValue: store.data.preferences.effects) ?? .subtle, trigger: trigger, kind: .record))
+                Text("\(scenes.filter { $0.status == "Experienced" }.count) scenes lived · \(scenes.count) scenes in your sky")
+                    .font(.subheadline).foregroundStyle(theme.secondary)
+                HStack {
+                    Text("Explore every scene").font(.headline)
+                    Spacer()
+                    Image(systemName: "arrow.up.right").accessibilityHidden(true)
+                }.frame(minHeight: 44)
+            }.foregroundStyle(theme.text).contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .modifier(ConstellationZoomSource(id: "story-constellation", namespace: constellationZoom))
+        .accessibilityIdentifier("constellation-preview")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Explore constellation, \(scenes.count) scenes, \(scenes.filter { $0.status == "Experienced" }.count) experienced")
+        .accessibilityHint("Opens the full star map and an accessible scene list")
     }
 }
 

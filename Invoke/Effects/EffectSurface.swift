@@ -29,6 +29,27 @@ enum InvokeEffectLevel: String, CaseIterable, Identifiable {
     var title: String { rawValue.capitalized }
 }
 
+enum InvokeShaderStyle: String, CaseIterable, Identifiable {
+    case theme, ripple, beam, sparkle
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .theme: "Theme signature"
+        case .ripple: "Ripples"
+        case .beam: "Spotlight"
+        case .sparkle: "Constellation"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .theme: "Pigment, silver, or a theatrical arch, chosen by your theme."
+        case .ripple: "Rings spread from your touch, adapted from Ripples."
+        case .beam: "A short sweep of light, adapted from Beam."
+        case .sparkle: "A few stars briefly illuminate, adapted from Sparkle."
+        }
+    }
+}
+
 enum EffectKind: String, CaseIterable, Identifiable {
     case button, card, record, relic, chapter
     var id: String { rawValue }
@@ -64,7 +85,9 @@ struct EffectSurface: View {
     let kind: EffectKind
     var origin: CGPoint = CGPoint(x: 0.5, y: 0.5)
 
+    @EnvironmentObject private var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scenePhase) private var scenePhase
     @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -73,12 +96,25 @@ struct EffectSurface: View {
     @State private var visible = true
 
     private var motionAllowed: Bool {
-        level != .off && !reduceMotion && !lowPower && scenePhase == .active && visible
+        level != .off && !reduceMotion && !reduceTransparency && !lowPower && scenePhase == .active && visible
     }
 
     private var intensity: Float {
         let base: Float = level == .full ? 0.42 : 0.22
-        return contrast == .increased ? base * 0.55 : base
+        let requested = Float(min(1.5, max(0.35, store.data.preferences.effectIntensity)))
+        return base * requested * (contrast == .increased ? 0.55 : 1)
+    }
+    private var duration: TimeInterval { kind.duration / min(1.4, max(0.6, store.data.preferences.effectSpeed)) }
+    private var style: InvokeShaderStyle { InvokeShaderStyle(rawValue: store.data.preferences.shaderStyle) ?? .theme }
+
+    private var chosenColor: Color {
+        if kind == .button {
+            switch theme {
+            case .ink: Color(red: 0.13, green: 0.015, blue: 0.025)
+            case .velvet: Color(red: 0.34, green: 0.31, blue: 0.39)
+            case .astral: Color(red: 1.0, green: 0.69, blue: 0.43)
+            }
+        } else { theme.decoration }
     }
 
     var body: some View {
@@ -87,7 +123,7 @@ struct EffectSurface: View {
                 staticDecoration(size: geometry.size)
                 if let startedAt, motionAllowed {
                     TimelineView(.animation(minimumInterval: level == .full ? 1.0 / 60.0 : 1.0 / 30.0)) { context in
-                        let progress = min(1, max(0, context.date.timeIntervalSince(startedAt) / kind.duration))
+                        let progress = min(1, max(0, context.date.timeIntervalSince(startedAt) / duration))
                         // Shader conforms to ShapeStyle; it only paints this transparent shape.
                         // Native labels and the native Button are never rasterized or distorted.
                         Rectangle().fill(shader(size: geometry.size, progress: Float(progress)))
@@ -108,7 +144,7 @@ struct EffectSurface: View {
             eventOrigin = origin
             startedAt = Date()
             do {
-                try await Task.sleep(for: .seconds(kind.duration))
+                try await Task.sleep(for: .seconds(duration))
             } catch {
                 return // Cancellation belongs to a new trigger or a disappearing surface.
             }
@@ -119,6 +155,9 @@ struct EffectSurface: View {
         }
         .onChange(of: theme) { _, _ in startedAt = nil }
         .onChange(of: level) { _, _ in startedAt = nil }
+        .onChange(of: store.data.preferences.shaderStyle) { _, _ in startedAt = nil }
+        .onChange(of: store.data.preferences.effectIntensity) { _, _ in startedAt = nil }
+        .onChange(of: store.data.preferences.effectSpeed) { _, _ in startedAt = nil }
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange).receive(on: RunLoop.main)) { _ in
             lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         }
@@ -128,6 +167,15 @@ struct EffectSurface: View {
     private func shader(size: CGSize, progress: Float) -> Shader {
         let dimensions = Shader.Argument.float2(Float(max(size.width, 1)), Float(max(size.height, 1)))
         let point = Shader.Argument.float2(Float(min(1, max(0, eventOrigin.x))), Float(min(1, max(0, eventOrigin.y))))
+        switch style {
+        case .ripple:
+            return ShaderLibrary.invokeRippleChoice(dimensions, .float(progress), .float(intensity), point, .color(chosenColor))
+        case .beam:
+            return ShaderLibrary.invokeBeamChoice(dimensions, .float(progress), .float(intensity), point, .color(chosenColor))
+        case .sparkle:
+            return ShaderLibrary.invokeSparkleChoice(dimensions, .float(progress), .float(intensity), point, .color(chosenColor))
+        case .theme: break
+        }
         switch theme {
         case .ink:
             return ShaderLibrary.invokePigment(dimensions, .float(progress), .float(intensity), point, .float(kind.index))

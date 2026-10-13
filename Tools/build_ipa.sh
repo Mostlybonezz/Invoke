@@ -4,22 +4,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 project_root="$PWD"
-version="${INVOKE_VERSION:-1.0.0}"
+version="${INVOKE_VERSION:-1.1.0}"
 build_number="${INVOKE_BUILD_NUMBER:-1}"
 if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$build_number" =~ ^[1-9][0-9]*$ ]]; then
   echo "Expected INVOKE_VERSION=major.minor.patch and positive INVOKE_BUILD_NUMBER." >&2
   exit 1
 fi
 if [[ "$(uname -s)" != Darwin ]]; then
-  echo "IPA compilation requires macOS and Xcode 16+. Use GitHub Actions on Windows." >&2
+  echo "IPA compilation requires macOS, Xcode 27.0, and iOS 27.0 SDKs. Use GitHub Actions on Windows." >&2
   exit 1
 fi
 mkdir -p build/release
+developer_dir="$(python3 Tools/select_xcode.py --print-path)"
+export DEVELOPER_DIR="$developer_dir"
 plutil -lint Invoke.xcodeproj/project.pbxproj
 xcodebuild -version | tee build/xcode-version.txt
 xcodebuild build \
   -project Invoke.xcodeproj -scheme Invoke -configuration Release \
-  -sdk iphoneos -destination 'generic/platform=iOS' \
+  -sdk iphoneos27.0 -destination 'generic/platform=iOS' \
   -derivedDataPath build/DeviceDerivedData \
   ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
   IPHONEOS_DEPLOYMENT_TARGET=17.0 \
@@ -65,11 +67,19 @@ with zipfile.ZipFile(ipa) as archive:
     info = plistlib.loads(archive.read('Payload/Invoke.app/Info.plist'))
     assert info['CFBundleIdentifier'] == 'app.invoke.personal', info
     assert info['CFBundlePackageType'] == 'APPL', info
+    assert info['MinimumOSVersion'] == '17.0', info
+    assert info['DTSDKName'] == 'iphoneos27.0', info
     assert 'Payload/Invoke.app/Invoke' in archive.namelist()
     assert all(name.startswith('Payload/') for name in archive.namelist())
     assert not any(name.endswith('embedded.mobileprovision') for name in archive.namelist())
 digest = hashlib.sha256(ipa.read_bytes()).hexdigest()
 (output / 'Invoke.ipa.sha256').write_text(f'{digest}  Invoke.ipa\n')
+toolchain = json.loads(Path('build/toolchain.json').read_text())
+simulator_path = Path('build/simulator-info.json')
+simulator = json.loads(simulator_path.read_text()) if simulator_path.exists() else None
+if os.environ.get('GITHUB_ACTIONS') == 'true':
+    assert simulator and simulator['runtimeVersion'] == '27.0', simulator
+    assert simulator['testStatus'] == 'passed', simulator
 metadata = {
     'app': info['CFBundleDisplayName'],
     'bundleIdentifier': info['CFBundleIdentifier'],
@@ -83,6 +93,12 @@ metadata = {
     'sha256': digest,
     'bytes': ipa.stat().st_size,
     'xcode': Path('build/xcode-version.txt').read_text().strip(),
+    'toolchain': toolchain,
+    'deviceSDK': {'name': info['DTSDKName'], 'build': info.get('DTSDKBuild'),
+                  'version': toolchain['sdks']['iphoneos']['version']},
+    'simulatorValidation': simulator,
+    'testResults': json.loads(Path('build/test-summary.json').read_text())
+                   if Path('build/test-summary.json').exists() else None,
     'workflowRun': os.environ.get('GITHUB_RUN_ID'),
     'deviceValidation': 'Not performed by CI; test on the intended iPhone and LiveContainer version.',
 }

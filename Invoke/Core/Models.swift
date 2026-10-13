@@ -15,11 +15,36 @@ struct AppData: Codable, Equatable {
 }
 
 struct Preferences: Codable, Equatable {
-    var theme = "ink"
+    var theme = "astral"
     var effects = "subtle"
+    var shaderStyle = "theme"
+    var effectIntensity = 1.0
+    var effectSpeed = 1.0
+    var glassStyle = "system"
     var onboardingComplete = false
     var pinnedStoryID: UUID? = nil
     var lastOpenedAt = Date()
+}
+
+extension Preferences {
+    private enum CodingKeys: String, CodingKey {
+        case theme, effects, shaderStyle, effectIntensity, effectSpeed, glassStyle
+        case onboardingComplete, pinnedStoryID, lastOpenedAt
+    }
+
+    /// Additive appearance settings preserve version 1 writing and the user's chosen theme.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        theme = try values.decode(String.self, forKey: .theme)
+        effects = try values.decode(String.self, forKey: .effects)
+        shaderStyle = try values.decodeIfPresent(String.self, forKey: .shaderStyle) ?? "theme"
+        effectIntensity = try values.decodeIfPresent(Double.self, forKey: .effectIntensity) ?? 1
+        effectSpeed = try values.decodeIfPresent(Double.self, forKey: .effectSpeed) ?? 1
+        glassStyle = try values.decodeIfPresent(String.self, forKey: .glassStyle) ?? "system"
+        onboardingComplete = try values.decode(Bool.self, forKey: .onboardingComplete)
+        pinnedStoryID = try values.decodeIfPresent(UUID.self, forKey: .pinnedStoryID)
+        lastOpenedAt = try values.decode(Date.self, forKey: .lastOpenedAt)
+    }
 }
 
 struct Story: Identifiable, Codable, Equatable {

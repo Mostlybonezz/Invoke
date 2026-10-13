@@ -154,3 +154,44 @@ static half4 invokePremultiplied(float3 rgb, float coverage) {
     return invokePremultiplied(float3(1.0, 0.69, 0.43),
                                coverage * invokeEnvelope(progress) * intensity);
 }
+
+// User-selected styles reuse the same pinned source-derived kernels, with the active
+// theme's color supplied as an opaque SwiftUI Color. They never sample native text.
+[[ stitchable ]] half4 invokeRippleChoice(float2 position, float2 size, float progress,
+                                         float intensity, float2 origin, half4 tint) {
+    size = max(size, float2(1.0));
+    float2 uv = position / size;
+    float aspect = size.x / size.y;
+    float distance = length((uv - origin) * float2(aspect, 1.0));
+    float radius = progress * max(1.0, aspect) * 0.95;
+    float coverage = invokeRingWaves(distance, 31.0, progress * 13.0, 0.24, 0.25)
+        * exp(-pow((distance - radius) / 0.19, 2.0)) * invokeEnvelope(progress);
+    return invokePremultiplied(float3(tint.rgb), coverage * intensity);
+}
+
+[[ stitchable ]] half4 invokeBeamChoice(float2 position, float2 size, float progress,
+                                       float intensity, float2 origin, half4 tint) {
+    size = max(size, float2(1.0));
+    float2 uv = position / size;
+    float aspect = size.x / size.y;
+    float sweep = mix(-0.25, 1.25, progress) + (origin.x - 0.5) * 0.15;
+    float beam = invokeBeam(uv * float2(aspect, 1.0),
+        float2((sweep - 0.17) * aspect, -0.1), float2((sweep + 0.17) * aspect, 1.1),
+        0.035, 0.12, 3.5, 2.5);
+    return invokePremultiplied(float3(tint.rgb), beam * invokeEnvelope(progress) * intensity);
+}
+
+[[ stitchable ]] half4 invokeSparkleChoice(float2 position, float2 size, float progress,
+                                          float intensity, float2 origin, half4 tint) {
+    size = max(size, float2(1.0));
+    float2 uv = position / size;
+    const float2 points[5] = {float2(0.13, 0.63), float2(0.30, 0.30),
+        float2(0.50, 0.50), float2(0.70, 0.64), float2(0.87, 0.31)};
+    float coverage = 0.0;
+    for (int i = 0; i < 5; ++i) {
+        float2 point = clamp(points[i] + (origin - 0.5) * 0.15, float2(0.07), float2(0.93));
+        float phase = clamp((progress - float(i) * 0.07) * 1.7, 0.0, 1.0);
+        coverage += invokeStar((uv - point) * size / 2.0, 15.0) * invokeEnvelope(phase);
+    }
+    return invokePremultiplied(float3(tint.rgb), coverage * invokeEnvelope(progress) * intensity);
+}

@@ -5,6 +5,7 @@ import SwiftUI
 struct EffectsLabView: View {
     let theme: InvokeEffectTheme
     let level: InvokeEffectLevel
+    @EnvironmentObject private var store: AppStore
     @State private var event = 0
     @State private var eventKind = EffectKind.card
     @State private var status = "Try the button and the story card."
@@ -17,14 +18,6 @@ struct EffectsLabView: View {
         }
     }
     private var text: Color { theme == .ink ? Color(red: 0.11, green: 0.10, blue: 0.09) : Color(red: 0.96, green: 0.91, blue: 0.85) }
-    private var buttonColor: Color {
-        switch theme {
-        case .ink: Color(red: 0.38, green: 0.07, blue: 0.10)
-        case .velvet: Color(red: 0.91, green: 0.85, blue: 0.77)
-        case .astral: Color(red: 0.71, green: 0.20, blue: 0.08)
-        }
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -32,18 +25,16 @@ struct EffectsLabView: View {
                     .font(.system(.largeTitle, design: .serif))
                 Text("\(theme.title) · \(level.title) effects")
                     .font(.subheadline)
+                Text("\((InvokeShaderStyle(rawValue: store.data.preferences.shaderStyle) ?? .theme).title) · \(store.data.preferences.effectIntensity, format: .percent.precision(.fractionLength(0))) intensity · \(store.data.preferences.effectSpeed, format: .number.precision(.fractionLength(1)))× speed")
+                    .font(.footnote)
                 Text("A native button and card for checking Invoke’s effects. These samples don’t change your stories.")
                     .font(.body)
 
-                Button {
+                InvokePrimaryButton(title: "Enter the scene") {
                     status = "Scene entered immediately."
                     eventKind = .card
                     event += 1
-                } label: {
-                    Label("Enter the scene", systemImage: "arrow.right")
                 }
-                .buttonStyle(InvokeEffectButtonStyle(theme: theme, level: level,
-                    background: buttonColor, foreground: theme == .velvet ? .black : .white))
 
                 Button {
                     eventKind = .card
@@ -69,12 +60,14 @@ struct EffectsLabView: View {
 
                 Text(status).font(.subheadline).accessibilityAddTraits(.updatesFrequently)
 
-                VStack(spacing: 14) {
-                    eventButton("Record a scene", symbol: "star", kind: .record)
-                    eventButton("Dedicate a relic", symbol: "sparkles", kind: .relic)
-                    eventButton("Open a chapter", symbol: "book", kind: .chapter)
+                InvokeGlassGroup(spacing: 12) {
+                    VStack(spacing: 14) {
+                        eventButton("Record a scene", symbol: "star", kind: .record)
+                        eventButton("Dedicate a relic", symbol: "sparkles", kind: .relic)
+                        eventButton("Open a chapter", symbol: "book", kind: .chapter)
+                    }
                 }
-                Text("Effects stop after each moment. Reduce Motion, Low Power Mode, and Off use a static frame. Scroll the card out of view or leave the app to check that rendering stops.")
+                Text("Effects stop after each moment. Reduce Motion, Reduce Transparency, Low Power Mode, and Off use a static frame. Scroll the card out of view or leave the app to check that rendering stops. Adjust style, intensity, speed, and material in Appearance.")
                     .font(.footnote)
             }
             .padding(22)
@@ -83,6 +76,7 @@ struct EffectsLabView: View {
         .background(paper.ignoresSafeArea())
         .navigationTitle("Effects studio")
         .navigationBarTitleDisplayMode(.inline)
+        .invokeScreen()
     }
 
     private func eventButton(_ title: String, symbol: String, kind: EffectKind) -> some View {
@@ -93,11 +87,15 @@ struct EffectsLabView: View {
         } label: {
             Label(title, systemImage: symbol)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.horizontal, 16)
         }
         .buttonStyle(.plain)
+        .invokeGlassControl(in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
 #Preview {
-    NavigationStack { EffectsLabView(theme: .ink, level: .subtle) }
+    NavigationStack { EffectsLabView(theme: .astral, level: .subtle) }
+        .environmentObject(AppStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent("InvokeEffectsPreview", isDirectory: true)))
+        .environment(\.invokeTheme, .astral)
 }

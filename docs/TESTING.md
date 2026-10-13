@@ -1,6 +1,12 @@
 # Invoke verification and acceptance
 
-## Results from this delivery
+## Version 1.1.0
+
+Source checks include 24 Swift files, 24 unit test methods and 2 native UI test methods. Native execution is pending the release run. The workflow requires exact Xcode 27.0 and iOS 27.0 SDK/runtime evidence; it fails instead of silently using an older OS.
+
+New tests cover version 1 preference decoding without losing writing, new appearance round trips, invalid preference rejection, the two-level constellation navigation and scene editing, and selecting all three themes. UI tests launch with an isolated temporary store. CI exports XCTest screenshots for visual inspection.
+
+## Historical 1.0.0 results
 
 Initial source checks completed on Windows on October 12, 2026. Native CI then ran on macOS using **Xcode 16.4 (16F6)** and an **iOS 18.5 simulator**. [Run 38343056754](https://github.com/Mostlybonezz/Invoke/actions/runs/38343056754) confirms 21 tests passed with zero failures and successful Swift/Metal compilation for both simulator and arm64 iOS Release targets. No physical iPhone or LiveContainer session has been performed.
 
@@ -29,7 +35,7 @@ Native compilation and automated tests now supplement the earlier grammar/source
 
 ## Remaining native checks
 
-Open the shared Invoke scheme with Xcode 16 or later. Build on an iPhone simulator, then actual supported hardware. The Metal file is already in Compile Sources and the MIT notice is already a bundle resource. Start with Settings → Appearance → Try button & card effects. Exercise all three themes and Subtle / Full / Off. Verify the native button fires immediately, the card renders, shader arguments bind correctly, and static alternatives look intentional. Resolve any build/rendering issue before treating the wider effect system as validated.
+Open the shared Invoke scheme with Xcode 27 or later. Build on an iPhone simulator, then actual supported hardware. The Metal file is already in Compile Sources and the MIT notice is already a bundle resource. Start with Settings → Appearance → Try button & card effects. Exercise all three themes and Subtle / Full / Off. Verify the native button fires immediately, the card renders, shader arguments bind correctly, and static alternatives look intentional. Resolve any build/rendering issue before treating the wider effect system as validated.
 
 Run Product → Test. `AppStoreTests.swift` covers defaults, saved/reopened data, debounce, photos, image round trips, restore integrity, invalid imports, schema rejection, corrupt snapshot recovery, archives/deletion, and examples. `StoryFlowTests.swift` covers the actual store helpers used by the story UI. The test target uses isolated temporary directories and synthetic photos.
 
@@ -39,7 +45,7 @@ Every row below is **pending manual validation**. Automated store tests and simu
 
 | Flow | Procedure and expected result |
 | --- | --- |
-| First launch | Delete simulator app, use system Dark Mode, launch. Ink & Omen and Subtle must appear. Choose a new story or explicitly explore labeled examples. |
+| First launch | Delete simulator app, use system Dark Mode, launch. Astral Theatre and Subtle must appear. Choose a new story or explicitly explore labeled examples. |
 | Theme persistence | Switch each appearance, relaunch, verify choice retained. Keep unfinished writing and a navigation stack in another tab while switching; return to identical content and position. |
 | Authoring | Enter short answers; leave at each of six steps; kill/reopen after Saved; resume. Add/connect manifestation, select all shapes, custom primary mode, max two secondary modes. Free prose remains intact until replacement accepted. |
 | Scene loop | Create scene with cue/effort/smaller version; connect belief, ritual, relic; enter; record attempt with an unexpected outcome. Scene becomes Experienced, reflection persists, constellation/list updates. |
@@ -58,6 +64,8 @@ Every row below is **pending manual validation**. Automated store tests and simu
 | Invalid backups | Try wrong schema, bad JSON, missing photo, wrong hash, path traversal filename, duplicate IDs and broken parent links. Existing memory/files must remain unchanged. |
 | Interruptions/errors | Background during typing/photo import; reopen; test locked storage and low-disk conditions. Unsaved errors must remain visible; retry/export must preserve current writing. |
 | Offline | Airplane Mode: author, edit, reflect, photos already on device, search, keep/restore local backup. No external service dependency. Files/photos stored only in a cloud provider may require that provider to download first. |
+| Constellation | Open Sanctuary preview, verify native zoom into map and into a labeled star’s scene script; back navigation reverses each transition. Test all chapters, more than six scenes, readable list, edited scripts, and closed chapters. Reduce Motion uses standard navigation. |
+| Liquid Glass | Verify system/tinted/solid controls, legible writing, native tab/navigation bars, Reduce Transparency and Increase Contrast; inspect both light Ink and dark Astral/Velvet. |
 | Effects | Check touch origins, finite record/relic/chapter effects, rapid taps, scrolling offscreen, changing tabs/theme, backgrounding, Low Power Mode and Off. No idle recurring rendering. |
 
 ## Accessibility and hardware

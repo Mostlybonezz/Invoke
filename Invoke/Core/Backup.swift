@@ -153,7 +153,13 @@ enum BackupValidation {
             throw InvokeDataError.unsupportedVersion(data.schemaVersion)
         }
         guard ["ink", "velvet", "astral"].contains(data.preferences.theme),
-              ["subtle", "full", "off"].contains(data.preferences.effects) else {
+              ["subtle", "full", "off"].contains(data.preferences.effects),
+              ["theme", "ripple", "beam", "sparkle"].contains(data.preferences.shaderStyle),
+              ["system", "tinted", "solid"].contains(data.preferences.glassStyle),
+              data.preferences.effectIntensity.isFinite,
+              (0.35...1.5).contains(data.preferences.effectIntensity),
+              data.preferences.effectSpeed.isFinite,
+              (0.6...1.4).contains(data.preferences.effectSpeed) else {
             throw InvokeDataError.invalidBackup("Appearance preferences are invalid.")
         }
         func unique<T: Identifiable>(_ records: [T]) throws where T.ID == UUID {

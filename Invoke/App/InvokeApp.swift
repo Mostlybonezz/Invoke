@@ -2,8 +2,18 @@ import SwiftUI
 
 @main
 struct InvokeApp: App {
-    @StateObject private var store = AppStore()
+    @StateObject private var store: AppStore
     @Environment(\.scenePhase) private var scenePhase
+    init() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("InvokeUITests-\(UUID().uuidString)")
+            _store = StateObject(wrappedValue: AppStore(directory: directory))
+            return
+        }
+        #endif
+        _store = StateObject(wrappedValue: AppStore())
+    }
     var body: some SwiftUI.Scene {
         WindowGroup {
             InvokeRootView().environmentObject(store)
@@ -50,6 +60,9 @@ struct OnboardingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     HStack { Image(systemName: "sparkle"); Text("Invoke").font(.largeTitle).fontDesign(.serif) }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("appearance-current-theme")
+                        .accessibilityValue(theme.id)
                     CelestialOrnament()
                     SectionEyebrow(text: "A little authorship. A little magic.")
                     Text("Your next chapter can begin quietly.").font(.largeTitle).fontDesign(.serif)
@@ -57,7 +70,7 @@ struct OnboardingView: View {
                     Text("Author → Rehearse → Act → Reflect → Revise").font(.subheadline).foregroundStyle(theme.secondary)
                     Text("Your beliefs and interpretations belong to you. Your writing and photographs stay on this device; export a backup to keep a portable copy.").foregroundStyle(theme.secondary)
                     InvokePrimaryButton(title: "Begin my story") { _ = store.beginStory(); store.data.preferences.onboardingComplete = true; store.flush() }
-                    Button("Explore an example collection") { store.loadExamples(); store.data.preferences.onboardingComplete = true; store.flush() }.frame(maxWidth: .infinity, minHeight: 44)
+                    Button("Explore an example collection") { store.loadExamples(); store.data.preferences.onboardingComplete = true; store.flush() }.frame(maxWidth: .infinity, minHeight: 44).accessibilityIdentifier("onboarding-examples")
                     Text("Examples are labeled and can be removed in Settings.").font(.footnote).foregroundStyle(theme.secondary)
                 }.padding(26)
             }.invokeScreen()
@@ -80,7 +93,7 @@ struct SanctuaryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                HStack { Image(systemName: "sparkle").foregroundStyle(theme.accent); Text("Invoke").font(.title).fontDesign(.serif); Spacer(); NavigationLink { SettingsView() } label: { Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44).accessibilityLabel("Settings") } }
+                HStack { Image(systemName: "sparkle").foregroundStyle(theme.accent); Text("Invoke").font(.title).fontDesign(.serif); Spacer(); NavigationLink { SettingsView() } label: { Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44).accessibilityLabel("Settings") }.accessibilityIdentifier("sanctuary-settings") }
                 SectionEyebrow(text: welcomeBack ? "Welcome back · right where you left off" : "A more intentional tomorrow")
                 if let story = store.currentStory() {
                     NavigationLink { StoryDetailView(storyID: story.id) } label: {
@@ -90,7 +103,7 @@ struct SanctuaryView: View {
                             if let chapter = store.data.chapters.first(where: { $0.id == story.currentChapterID }) { Text(chapter.title).font(.subheadline).foregroundStyle(theme.secondary) }
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain)
-                    InvokeCard { ConstellationView(scenes: store.data.scenes.filter { $0.storyID == story.id }, trigger: featureTrigger) }
+                    InvokeCard { ConstellationView(scenes: store.data.scenes.filter { $0.storyID == story.id }, trigger: featureTrigger, storyID: story.id) }
                     if let next = store.nextScene(for: story) {
                         InvokeCard {
                             VStack(alignment: .leading, spacing: 20) {

@@ -17,7 +17,7 @@ struct SceneDetailView: View {
                         TextField("Scene title", text: binding.title, axis: .vertical).font(.largeTitle).fontDesign(.serif).accessibilityLabel("Scene title").disabled(closed)
                         if closed { StatusPill(text: scene.status); Text("This scene belongs to a closed chapter.").foregroundStyle(theme.secondary) }
                         Group {
-                            ProseField(title: "What I will do", text: binding.action)
+                            ProseField(title: "What I will do", text: binding.action, accessibilityID: "scene-action-editor")
                             ProseField(title: "Why it matters", text: binding.why)
                             ProseField(title: "When or where", text: binding.cue, prompt: "A date is optional. A situation can be your cue.")
                             TextField("Approximate effort or duration", text: binding.effort).accessibilityLabel("Approximate effort or duration")

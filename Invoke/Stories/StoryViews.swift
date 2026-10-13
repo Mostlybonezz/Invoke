@@ -77,7 +77,7 @@ struct StoryDetailView: View {
                     SectionEyebrow(text: "Current chapter")
                     TextField("Chapter title", text: store.recordBinding(\.chapters, id: chapter.id, fallback: chapter).title).font(.title2).fontDesign(.serif).accessibilityLabel("Current chapter title")
                 }
-                InvokeCard { ConstellationView(scenes: store.data.scenes.filter { $0.storyID == storyID }, trigger: store.data.scenes.filter { $0.storyID == storyID && $0.status == "Experienced" }.count) }
+                InvokeCard { ConstellationView(scenes: store.data.scenes.filter { $0.storyID == storyID }, trigger: store.data.scenes.filter { $0.storyID == storyID && $0.status == "Experienced" }.count, storyID: storyID) }
                 NavigationLink { StoryAuthorView(storyID: storyID) } label: { Label(story.status == "Draft" ? "Resume authoring" : "Edit story & passage", systemImage: "square.and.pencil").frame(minHeight: 44) }
                 if !story.prose.isEmpty { Text(story.prose).font(.body).lineSpacing(6).textSelection(.enabled) }
                 Picker("Story status", selection: binding.status) { ForEach(StoryCatalog.storyStatuses, id: \.self) { Text($0).tag($0) } }

@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
@@ -19,6 +20,7 @@ struct SettingsView: View {
             Section {
                 NavigationLink { AppearanceView() } label: { Label("Appearance", systemImage: "paintpalette") }
                 Text("\(theme.name) · \(store.data.preferences.effects.capitalized) effects").foregroundStyle(theme.secondary)
+                    .accessibilityIdentifier("appearance-current-theme").accessibilityValue(theme.id)
             }
             Section("Your writing, on this iPhone") {
                 Label(store.saveState, systemImage: "internaldrive")
@@ -37,7 +39,9 @@ struct SettingsView: View {
             }
             Section("About Invoke") {
                 Text("Author → Rehearse → Act → Reflect → Revise")
-                Text("Version 1.0 · Private first version\nRequires iOS 17 or later.").font(.footnote)
+                Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"))").font(.footnote)
+                Text("Running on iOS \(UIDevice.current.systemVersion)").font(.footnote)
+                Text("Minimum supported iOS: \(Bundle.main.object(forInfoDictionaryKey: "MinimumOSVersion") as? String ?? "17.0")").font(.footnote).foregroundStyle(theme.secondary)
                 NavigationLink("Shader acknowledgments") { ShaderAcknowledgmentsView() }
             }
         }.navigationTitle("Settings").invokeScreen()
@@ -109,6 +113,10 @@ struct SettingsView: View {
 struct AppearanceView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.invokeTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+    @State private var previewTrigger = 0
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -127,13 +135,113 @@ struct AppearanceView: View {
                             .overlay(RoundedRectangle(cornerRadius: 16).stroke(theme.id == option.id ? option.accent : option.border, lineWidth: theme.id == option.id ? 2 : 0.8))
                     }.buttonStyle(.plain).accessibilityLabel(option.name + (theme.id == option.id ? ", selected" : ""))
                         .accessibilityAddTraits(theme.id == option.id ? .isSelected : [])
-                }
-                SectionEyebrow(text: "Effects")
-                Picker("Effects", selection: $store.data.preferences.effects) { Text("Subtle").tag("subtle"); Text("Full").tag("full"); Text("Off").tag("off") }.pickerStyle(.segmented)
-                Text("Brief effects mark actions. Reduce Motion, Low Power Mode, and inactive screens use static decoration. Writing screens stay quiet.").font(.footnote).foregroundStyle(theme.secondary)
-                NavigationLink { EffectsLabView(theme: InvokeEffectTheme(rawValue: theme.id) ?? .ink, level: InvokeEffectLevel(rawValue: store.data.preferences.effects) ?? .subtle) } label: { Label("Try button & card effects", systemImage: "sparkles").frame(minHeight: 44) }
+                        .accessibilityIdentifier("appearance-theme-\(option.id)")
+                }.accessibilityElement(children: .contain).accessibilityIdentifier("appearance-theme-picker")
+                glassControls
+                effectControls
+                preview
+                NavigationLink { EffectsLabView(theme: InvokeEffectTheme(rawValue: theme.id) ?? .astral, level: InvokeEffectLevel(rawValue: store.data.preferences.effects) ?? .subtle) } label: { Label("Open effects studio", systemImage: "sparkles").frame(minHeight: 44) }
             }.padding(20)
         }.navigationTitle("Appearance").invokeScreen()
+    }
+
+    private var glassControls: some View {
+        InvokeCard {
+            VStack(alignment: .leading, spacing: 16) {
+                SectionEyebrow(text: "Interface material")
+                Picker("Interface material", selection: $store.data.preferences.glassStyle) {
+                    ForEach(InvokeGlassStyle.allCases) { Text($0.title).tag($0.rawValue) }
+                }.pickerStyle(.menu).accessibilityIdentifier("appearance-glass-style")
+                Text("Liquid Glass brings light and depth to navigation and compact controls on iOS 26 and later. Your pages and writing fields keep an opaque, readable surface.")
+                    .font(.footnote).foregroundStyle(theme.secondary)
+                if #available(iOS 26.0, *) {
+                    if reduceTransparency || contrast == .increased {
+                        Label("Accessibility settings are using solid surfaces.", systemImage: "accessibility").font(.footnote)
+                    }
+                } else {
+                    Label("This iOS version uses solid surfaces.", systemImage: "square.stack").font(.footnote)
+                }
+            }
+        }
+    }
+
+    private var effectControls: some View {
+        InvokeCard {
+            VStack(alignment: .leading, spacing: 18) {
+                SectionEyebrow(text: "Moment effects")
+                Picker("Effects", selection: $store.data.preferences.effects) {
+                    ForEach(InvokeEffectLevel.allCases) { Text($0.title).tag($0.rawValue) }
+                }.pickerStyle(.menu).accessibilityIdentifier("appearance-effects-level")
+                Picker("Effect style", selection: $store.data.preferences.shaderStyle) {
+                    ForEach(InvokeShaderStyle.allCases) { Text($0.title).tag($0.rawValue) }
+                }.pickerStyle(.menu).accessibilityIdentifier("appearance-shader-style")
+                Text((InvokeShaderStyle(rawValue: store.data.preferences.shaderStyle) ?? .theme).detail)
+                    .font(.subheadline).foregroundStyle(theme.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Intensity · \(store.data.preferences.effectIntensity, format: .percent.precision(.fractionLength(0)))")
+                    Slider(value: $store.data.preferences.effectIntensity, in: 0.35...1.5, step: 0.05,
+                           onEditingChanged: { editing in if !editing { previewTrigger += 1 } }) {
+                        Text("Effect intensity")
+                    }
+                    .accessibilityValue(store.data.preferences.effectIntensity.formatted(.percent.precision(.fractionLength(0))))
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Speed · \(store.data.preferences.effectSpeed, format: .number.precision(.fractionLength(1)))×")
+                    Slider(value: $store.data.preferences.effectSpeed, in: 0.6...1.4, step: 0.1,
+                           onEditingChanged: { editing in if !editing { previewTrigger += 1 } }) {
+                        Text("Effect speed")
+                    }
+                    .accessibilityValue("\(store.data.preferences.effectSpeed.formatted(.number.precision(.fractionLength(1)))) times")
+                }
+                Text("Your chosen style, intensity, and speed apply to buttons, scene recordings, relics, and chapter moments. Effects remain brief; they never delay saving or navigation.")
+                    .font(.footnote).foregroundStyle(theme.secondary)
+                if reduceMotion || reduceTransparency {
+                    Label("Accessibility settings are using static decoration.", systemImage: "accessibility").font(.footnote)
+                } else {
+                    Text("Off and Low Power Mode use static decoration. Inactive and offscreen moments stop rendering.").font(.footnote).foregroundStyle(theme.secondary)
+                }
+            }
+        }
+    }
+
+    private var preview: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionEyebrow(text: "Your atmosphere, in miniature")
+            VStack(alignment: .leading, spacing: 18) {
+                InvokeGlassGroup(spacing: 12) {
+                    HStack {
+                        Label("Invoke", systemImage: "sparkle")
+                            .font(.subheadline.weight(.semibold)).padding(12)
+                            .invokeGlassControl(in: Capsule(), interactive: false)
+                        Spacer()
+                        Button { previewTrigger += 1 } label: {
+                            Image(systemName: "arrow.clockwise").frame(width: 44, height: 44)
+                        }.buttonStyle(.plain)
+                            .invokeGlassControl(in: Circle())
+                            .accessibilityLabel("Replay appearance preview")
+                    }
+                }
+                Text("A small act still changes the page.").font(.title2).fontDesign(.serif)
+                Text("Your next chapter").foregroundStyle(theme.secondary)
+            }
+            .padding(20)
+            .background {
+                RoundedRectangle(cornerRadius: 22).fill(theme.surface)
+                ThemeScenery().clipShape(RoundedRectangle(cornerRadius: 22))
+                EffectSurface(theme: InvokeEffectTheme(rawValue: theme.id) ?? .astral,
+                    level: InvokeEffectLevel(rawValue: store.data.preferences.effects) ?? .subtle,
+                    trigger: previewTrigger, kind: .card)
+            }
+            InvokePrimaryButton(title: "Try this moment") { previewTrigger += 1 }
+            Button("Reset motion & material") {
+                store.data.preferences.effects = "subtle"
+                store.data.preferences.shaderStyle = "theme"
+                store.data.preferences.effectIntensity = 1
+                store.data.preferences.effectSpeed = 1
+                store.data.preferences.glassStyle = "system"
+                store.flush()
+            }.frame(minHeight: 44)
+        }
     }
 }
 
