@@ -6,7 +6,7 @@ A private, native iPhone app for authoring a story, living its next believable s
 
 [GitHub build status](https://github.com/Mostlybonezz/Invoke/actions/workflows/ipa.yml) · [Releases](https://github.com/Mostlybonezz/Invoke/releases/latest) · [IPA download](https://github.com/Mostlybonezz/Invoke/releases/latest/download/Invoke.ipa)
 
-The GitHub Actions workflow builds and tests on macOS before publishing a release. [Invoke 1.0.0](https://github.com/Mostlybonezz/Invoke/releases/tag/v1.0.0) is published with the IPA, source feed, icon, checksum, and build metadata. The IPA uses an ad-hoc signature for LiveContainer or another signing tool; it is not App Store or Apple-distribution signed. Downloading it in Safari alone does not install it on your Home Screen.
+The GitHub Actions workflow builds and tests on macOS before publishing a release. [Invoke 1.1.0](https://github.com/Mostlybonezz/Invoke/releases/tag/v1.1.0) is published with the IPA, source feed, icon, checksum, and build metadata. The IPA uses an ad-hoc signature for LiveContainer or another signing tool; it is not App Store or Apple-distribution signed. Downloading it in Safari alone does not install it on your Home Screen.
 
 **LiveContainer source URL:** `https://github.com/Mostlybonezz/Invoke/releases/latest/download/source.json`
 
@@ -20,7 +20,7 @@ See [LiveContainer setup](docs/LIVECONTAINER.md) for adding the source or import
 4. Open Settings → Appearance → **Try button & card effects** first to validate the native shader prototype. See [Shader mapping](docs/Shader-Mapping.md).
 5. Run Product → Test for the included XCTest target. Complete the device checks in [Testing](docs/TESTING.md) before relying on the app for irreplaceable writing.
 
-The deployment target is **iOS 17.0**, portrait iPhone. Astral Theatre and Subtle effects are explicit first-launch defaults, Existing installations retain their saved theme. The indigo and orange icon matches Astral Theatre. Xcode previews in `Invoke/App/InvokePreviews.swift` cover all three themes and larger text; they have not been rendered here.
+The deployment target is **iOS 17.0**, portrait iPhone. Astral Theatre and Subtle effects are explicit first-launch defaults. Existing installations retain their saved theme. The indigo and orange icon matches Astral Theatre. Xcode previews in `Invoke/App/InvokePreviews.swift` cover all three themes and larger text; they have not been rendered here.
 
 Example command on a Mac, substituting an installed simulator's identifier:
 
@@ -38,12 +38,12 @@ xcodebuild -project Invoke.xcodeproj -scheme Invoke \
 - Settings → Appearance offers system, tinted, or solid surfaces, plus theme-matched/Ripples/Beam/Sparkle effects, intensity, speed, and a live replay preview.
 - The release workflow requires Xcode 27.0, the iOS 27.0 device SDK, and an exact iOS 27.0 simulator. The iOS 17 minimum is retained; a minimum deployment version is not an upper OS limit.
 
-Version 1.1.0 native verification is pending its release run; the historical 1.0.0 evidence below applies only to that release.
+[Release run 38349290401](https://github.com/Mostlybonezz/Invoke/actions/runs/38349290401) built version 1.1.0 with **Xcode 27.0 (27A266a)** and the **iOS 27.0 SDK**. All **26 tests passed with zero failures or skipped tests** on an iPhone 17 simulator running iOS 27.0: 24 unit tests and 2 UI flows covering constellation navigation, scene editing, the Astral default, and all three themes. Native screenshots were inspected for onboarding, Sanctuary, the expanded constellation, scene scripts, and theme selection. The arm64 IPA passed packaging and local signature checks. Physical iPhone/LiveContainer operation, animation performance, and the full accessibility matrix still require device testing.
 
 ## Implemented in source
 
 - Four native tabs: Sanctuary, Stories, Grimoire, and Relic Cabinet.
-- Three immediately switchable semantic themes, persisted appearance and effects settings, themed sheets and writing surfaces, original vector sigils, and a provisional app icon.
+- Three immediately switchable semantic themes, persisted appearance and effects settings, themed sheets and writing surfaces, original vector sigils, and an indigo/orange celestial app icon.
 - Six-step resumable story authoring, free prose, template preview with explicit acceptance, nine shapes, seven initial modes, custom primary modes, and up to two secondary modes.
 - Independent manifestations, beliefs, and rituals; searchable lists; shared connections; belief wording history; reusable ritual templates and separate performance logs.
 - Planned scenes, situational cues, smaller alternatives, focused rehearsal/entry, reflections that distinguish attempts from outcomes, and interactive constellations with accessible lists.
