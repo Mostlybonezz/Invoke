@@ -1,0 +1,175 @@
+name: Build Invoke IPA
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the tested IPA and sideload source as a GitHub release
+        type: boolean
+        default: true
+      release_tag:
+        description: New release tag (vMAJOR.MINOR.PATCH)
+        type: string
+        default: v1.0.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: invoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    name: Prepare source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Import an optional initial source bundle
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f Invoke-source.zip ]]; then
+            test "$GITHUB_REF_TYPE" = branch
+            python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import stat
+          import zipfile
+
+          root = Path.cwd().resolve()
+          with zipfile.ZipFile('Invoke-source.zip') as archive:
+              files = []
+              seen = set()
+              for entry in archive.infolist():
+                  path = PurePosixPath(entry.filename)
+                  if (path.is_absolute() or '..' in path.parts or '\\' in entry.filename
+                          or '.git' in path.parts or not path.parts
+                          or stat.S_ISLNK(entry.external_attr >> 16)):
+                      raise SystemExit(f'Unsafe bundle path: {entry.filename}')
+                  if path.parts[0] in ('DesignReferences', '__MACOSX') or entry.is_dir():
+                      continue
+                  if entry.filename in seen:
+                      raise SystemExit(f'Duplicate bundle path: {entry.filename}')
+                  seen.add(entry.filename)
+                  target = root.joinpath(*path.parts)
+                  target.resolve().relative_to(root)
+                  content = archive.read(entry)
+                  if target.exists() and target.read_bytes() != content:
+                      raise SystemExit(f'Refusing to replace different existing file: {path}')
+                  files.append((target, content))
+              if 'Invoke.xcodeproj/project.pbxproj' not in seen:
+                  raise SystemExit('Source bundle is missing the Xcode project.')
+              for target, content in files:
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(content)
+          PY
+            git rm -- Invoke-source.zip
+            git add --all
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Import Invoke native app source'
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Test and package iPhone app
+    needs: source
+    runs-on: macos-15
+    timeout-minutes: 45
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          persist-credentials: false
+      - name: Choose release version
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          tag="${INPUT_TAG:-v1.0.0}"
+          if [[ "$GITHUB_REF_TYPE" = tag ]]; then tag="$GITHUB_REF_NAME"; fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Release tag must be vMAJOR.MINOR.PATCH.' >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "INVOKE_VERSION=${tag#v}" >> "$GITHUB_ENV"
+          echo "INVOKE_BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+      - name: Select installed Xcode 16 or later
+        run: python3 Tools/select_xcode.py
+      - name: Check source package
+        run: |
+          plutil -lint Invoke.xcodeproj/project.pbxproj
+          python3 Tools/check_source.py
+      - name: Run XCTest on an installed iPhone simulator
+        run: bash Tools/test_ios.sh
+      - name: Compile arm64 Release and package IPA
+        run: bash Tools/build_ipa.sh
+      - name: Generate sideload repository feed
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: python3 Tools/generate_feed.py --ipa build/release/Invoke.ipa --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --output build/release/source.json
+      - name: Upload IPA and metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: Invoke-iPhone-IPA
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload build logs and test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Invoke-build-diagnostics
+          path: |
+            build/*.log
+            build/xcode-version.txt
+            build/TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    name: Publish download release
+    needs: [source, build]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Invoke-iPhone-IPA
+          path: release
+      - name: Publish a new version with downloadable IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.source.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'This release already exists. Choose a new version to preserve the existing download.' >&2
+            exit 1
+          fi
+          cat > release-notes.md <<'NOTES'
+          Invoke is a native iPhone app for stories, beliefs, manifestations, rituals, and personal relics.
+
+          Download **Invoke.ipa** in Safari and import it from Files using LiveContainer's app import button. Requires iOS 17 or later and a separately installed, working LiveContainer. This IPA has a local ad-hoc signature; it is not Apple-provisioned for direct installation from Safari. Other sideloading tools must apply their own signing.
+
+          The source at this release passed the included simulator XCTest suite, the arm64 iOS Release build, and IPA structure/signature checks in GitHub Actions. Physical iPhone and LiveContainer runtime validation remain to be completed on your device. Export backups before replacing an installation.
+
+          See **docs/LIVECONTAINER.md** in the repository for installation and the optional AltStore/SideStore source. **build-info.json** records the source commit, compiler, version, and checksum. **Invoke.ipa.sha256** can be used to verify the download.
+          NOTES
+          gh release create "$RELEASE_TAG" release/Invoke.ipa release/Invoke.ipa.sha256 release/build-info.json release/source.json release/icon.png \
+            --target "$SOURCE_COMMIT" --title "Invoke ${RELEASE_TAG#v}" --notes-file release-notes.md --latest
+          echo "Download: https://github.com/$GH_REPO/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
