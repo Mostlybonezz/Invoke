@@ -2,9 +2,13 @@
 
 ## Version 1.1.0
 
-Source checks include 24 Swift files, 24 unit test methods and 2 native UI test methods. Native execution is pending the release run. The workflow requires exact Xcode 27.0 and iOS 27.0 SDK/runtime evidence; it fails instead of silently using an older OS.
+[Release run 38349290401](https://github.com/Mostlybonezz/Invoke/actions/runs/38349290401), source commit `ce8428b88c063eccbb20da5812958ab2c4bb423d`, passed **26 tests: 24 unit tests and 2 UI tests, zero failures and zero skips**. The exact toolchain was **Xcode 27.0 (27A266a)** with the **iOS 27.0 SDK**; the simulator was **iPhone 17, iOS 27.0**. Swift and Metal compiled for both simulator and arm64 device Release builds. IPA packaging, strict local ad-hoc signature verification, and source-feed generation passed; [Invoke 1.1.0](https://github.com/Mostlybonezz/Invoke/releases/tag/v1.1.0) was published with five release assets.
 
-New tests cover version 1 preference decoding without losing writing, new appearance round trips, invalid preference rejection, the two-level constellation navigation and scene editing, and selecting all three themes. UI tests launch with an isolated temporary store. CI exports XCTest screenshots for visual inspection.
+Portable checks passed for 24 Swift files, project references, scheme XML, property lists, resource inclusion, and the opaque 1024 × 1024 icon. The workflow requires exact Xcode 27.0 and iOS 27.0 SDK/runtime evidence; it fails instead of silently using an older OS.
+
+New tests cover version 1 preference decoding without losing writing, new appearance round trips, invalid preference rejection, the two-level constellation navigation and scene editing, and selecting all three themes. UI tests launch with an isolated temporary store. CI retained 11 screenshots. Visual inspection covered Astral onboarding, Sanctuary in all three themes, the expanded constellation, scene script, and theme selection; no blocking clipping or contrast issue was found. Screenshots do not verify animation timing or GPU performance. Shader/material controls below the captured Appearance viewport were not visually inspected.
+
+The release assets were downloaded after publication and checked against the IPA SHA-256, compiled Info.plist, build metadata, and source feed. Physical iPhone and LiveContainer operation have not been tested.
 
 ## Historical 1.0.0 results
 
