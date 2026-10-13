@@ -13,7 +13,7 @@ on:
       release_tag:
         description: New release tag (vMAJOR.MINOR.PATCH)
         type: string
-        default: v1.0.0
+        default: v1.1.0
 
 permissions:
   contents: read
@@ -32,6 +32,8 @@ jobs:
       commit: ${{ steps.source.outputs.commit }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Import an optional initial source bundle
         id: source
         shell: bash
@@ -76,12 +78,99 @@ jobs:
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Import Invoke native app source'
             git push origin "HEAD:$GITHUB_REF_NAME"
           fi
+          if [[ -f Invoke-update.zip ]]; then
+            test "$GITHUB_REF_TYPE" = branch
+            python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import hashlib
+          import json
+          import re
+          import stat
+          import subprocess
+          import zipfile
+
+          root = Path.cwd().resolve()
+          allowed_roots = {'Invoke', 'InvokeTests', 'InvokeUITests', 'Invoke.xcodeproj',
+                           'Tools', 'docs', 'ThirdParty'}
+          allowed_files = {'README.md', '.gitignore'}
+          def safe_path(name):
+              path = PurePosixPath(name)
+              if (not name or path.is_absolute() or '..' in path.parts or '\\' in name
+                      or ':' in name or str(path) != name or not path.parts
+                      or any(part in {'.git', '.github', 'DesignReferences'} for part in path.parts)):
+                  raise SystemExit(f'Unsafe update path: {name!r}')
+              return path
+          def file_hash(data):
+              return hashlib.sha256(data).hexdigest()
+          with zipfile.ZipFile('Invoke-update.zip') as archive:
+              entries = {}
+              for entry in archive.infolist():
+                  name = entry.filename.rstrip('/') if entry.is_dir() else entry.filename
+                  safe_path(name)
+                  if entry.filename in entries or stat.S_ISLNK(entry.external_attr >> 16):
+                      raise SystemExit(f'Duplicate or symlink ZIP entry: {entry.filename}')
+                  entries[entry.filename] = entry
+              if len(entries) > 500 or sum(item.file_size for item in entries.values()) > 128 * 1024 * 1024:
+                  raise SystemExit('Update ZIP exceeds its bounded source-package limits.')
+              manifest = json.loads(archive.read('manifest.json'))
+              if manifest.get('schemaVersion') != 1 or not isinstance(manifest.get('files'), list):
+                  raise SystemExit('Expected update manifest schemaVersion 1 with a files list.')
+              base = manifest.get('sourceCommit', '')
+              if not re.fullmatch(r'[0-9a-f]{40}', base):
+                  raise SystemExit('Manifest sourceCommit must be a full lowercase Git SHA.')
+              subprocess.run(['git', 'merge-base', '--is-ancestor', base, 'HEAD'], check=True)
+              changes = []
+              expected_entries = {'manifest.json'}
+              seen = set()
+              for item in manifest['files']:
+                  if set(item) != {'path', 'oldSHA256', 'newSHA256'}:
+                      raise SystemExit('Only path, oldSHA256 and newSHA256 are accepted; deletions are unsupported.')
+                  path = safe_path(item['path'])
+                  if str(path) in seen or (path.parts[0] not in allowed_roots and str(path) not in allowed_files):
+                      raise SystemExit(f'Duplicate or disallowed update file: {path}')
+                  seen.add(str(path))
+                  expected_entries.add('files/' + str(path))
+                  target = root.joinpath(*path.parts)
+                  target.resolve().relative_to(root)
+                  for parent in (target, *target.parents):
+                      if parent == root:
+                          break
+                      if parent.is_symlink():
+                          raise SystemExit(f'Symlink in update destination: {path}')
+                  old_hash, new_hash = item['oldSHA256'], item['newSHA256']
+                  if not isinstance(new_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', new_hash):
+                      raise SystemExit(f'Invalid new SHA256: {path}')
+                  if old_hash is None:
+                      if target.exists():
+                          raise SystemExit(f'New file already exists: {path}')
+                  elif (not isinstance(old_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', old_hash)
+                        or not target.is_file() or file_hash(target.read_bytes()) != old_hash):
+                      raise SystemExit(f'Existing file differs from reviewed base: {path}')
+                  content = archive.read('files/' + str(path))
+                  if file_hash(content) != new_hash:
+                      raise SystemExit(f'Payload differs from reviewed new hash: {path}')
+                  changes.append((target, content))
+              actual_entries = {name for name, entry in entries.items() if not entry.is_dir()}
+              if not changes or actual_entries != expected_entries:
+                  raise SystemExit('Update must contain only the manifest and its nonempty reviewed file list.')
+              # Validate the entire update before modifying even the first file.
+              for target, content in changes:
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(content)
+              print(f'Applied {len(changes)} reviewed source updates based on {base}.')
+          PY
+            git rm -- Invoke-update.zip
+            git add --all
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Apply reviewed Invoke source update'
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build:
     name: Test and package iPhone app
     needs: source
-    runs-on: macos-15
+    # GitHub's public-preview image includes exact Xcode 27.0 and iOS 27.0.
+    runs-on: xcode-27
     timeout-minutes: 45
     outputs:
       tag: ${{ steps.version.outputs.tag }}
@@ -95,7 +184,7 @@ jobs:
         env:
           INPUT_TAG: ${{ inputs.release_tag }}
         run: |
-          tag="${INPUT_TAG:-v1.0.0}"
+          tag="${INPUT_TAG:-v1.1.0}"
           if [[ "$GITHUB_REF_TYPE" = tag ]]; then tag="$GITHUB_REF_NAME"; fi
           if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo 'Release tag must be vMAJOR.MINOR.PATCH.' >&2
@@ -104,15 +193,22 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "INVOKE_VERSION=${tag#v}" >> "$GITHUB_ENV"
           echo "INVOKE_BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-      - name: Select installed Xcode 16 or later
+      - name: Require Xcode 27.0 and iOS 27.0 SDKs
         run: python3 Tools/select_xcode.py
       - name: Check source package
         run: |
           plutil -lint Invoke.xcodeproj/project.pbxproj
           python3 Tools/check_source.py
-      - name: Run XCTest on an installed iPhone simulator
+      - name: Run XCTest and native launch on iOS 27.0
         run: bash Tools/test_ios.sh
-      - name: Compile arm64 Release and package IPA
+      - name: Export native UI screenshots and test summary
+        if: always()
+        run: |
+          if [[ -d build/TestResults.xcresult ]]; then
+            xcrun xcresulttool export attachments --path build/TestResults.xcresult --output-path build/ui-screenshots
+            xcrun xcresulttool get test-results summary --path build/TestResults.xcresult --compact > build/test-summary.json
+          fi
+      - name: Compile arm64 Release with iOS 27.0 SDK and package IPA
         run: bash Tools/build_ipa.sh
       - name: Generate sideload repository feed
         env:
@@ -133,6 +229,10 @@ jobs:
           path: |
             build/*.log
             build/xcode-version.txt
+            build/toolchain.json
+            build/simulator-info.json
+            build/test-summary.json
+            build/ui-screenshots
             build/Invoke-first-launch.png
             build/TestResults.xcresult
           if-no-files-found: ignore
@@ -165,11 +265,13 @@ jobs:
           cat > release-notes.md <<'NOTES'
           Invoke is a native iPhone app for stories, beliefs, manifestations, rituals, and personal relics.
 
+          New in 1.1.0: zoom from Sanctuary into your constellation, then open any labeled scene-star to read and edit its script. Explore all chapters through the map or scene list. Astral Theatre is the default for new installs, with an indigo and orange icon. Appearance settings now include native Liquid Glass, tinted or solid surfaces, and configurable Ripples, Beam, and Sparkle effects with intensity and speed controls. Existing writing and saved theme choices are preserved.
+
           Download **Invoke.ipa** in Safari and import it from Files using LiveContainer's app import button. Requires iOS 17 or later and a separately installed, working LiveContainer. This IPA has a local ad-hoc signature; it is not Apple-provisioned for direct installation from Safari. Other sideloading tools must apply their own signing.
 
-          The source at this release passed the included simulator XCTest suite, the arm64 iOS Release build, and IPA structure/signature checks in GitHub Actions. Physical iPhone and LiveContainer runtime validation remain to be completed on your device. Export backups before replacing an installation.
+          Built with Xcode 27.0 and the iOS 27.0 SDK. The source at this release passed the included XCTest suite and native launch on an iOS 27.0 iPhone simulator, the arm64 iOS Release build, and IPA structure/signature checks in GitHub Actions. The app still supports iOS 17 and later. Physical iPhone and LiveContainer runtime validation remain to be completed on your device. Export backups before replacing an installation.
 
-          See **docs/LIVECONTAINER.md** in the repository for installation and the optional AltStore/SideStore source. **build-info.json** records the source commit, compiler, version, and checksum. **Invoke.ipa.sha256** can be used to verify the download.
+          See **docs/LIVECONTAINER.md** in the repository for installation and the optional AltStore/SideStore source. **build-info.json** records the source commit, actual compiler/SDK, tested simulator OS/device, minimum supported OS, version, and checksum. **Invoke.ipa.sha256** can be used to verify the download.
           NOTES
           gh release create "$RELEASE_TAG" release/Invoke.ipa release/Invoke.ipa.sha256 release/build-info.json release/source.json release/icon.png \
             --target "$SOURCE_COMMIT" --title "Invoke ${RELEASE_TAG#v}" --notes-file release-notes.md --latest
