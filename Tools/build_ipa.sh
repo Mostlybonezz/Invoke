@@ -30,7 +30,7 @@ xcodebuild build \
 app="$project_root/build/DeviceDerivedData/Build/Products/Release-iphoneos/Invoke.app"
 test -f "$app/Info.plist"
 executable="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")"
-xcrun lipo -verify_arch arm64 "$app/$executable"
+xcrun lipo "$app/$executable" -verify_arch arm64
 test -f "$app/default.metallib"
 
 # Nested executable bundles must be signed before the containing app.
