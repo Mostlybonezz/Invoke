@@ -2,7 +2,9 @@
 
 ## Results from this delivery
 
-Environment: Windows, no Swift compiler, Xcode, Apple SDK, Simulator, or connected iPhone. Source checks completed October 12, 2026. **There are no native build/device results.**
+Initial source checks completed on Windows on October 12, 2026. Native CI then ran on macOS using **Xcode 16.4 (16F6)** and an **iOS 18.5 simulator**. [Run 38343056754](https://github.com/Mostlybonezz/Invoke/actions/runs/38343056754) confirms 21 tests passed with zero failures and successful Swift/Metal compilation for both simulator and arm64 iOS Release targets. No physical iPhone or LiveContainer session has been performed.
+
+[Release run 38343919533](https://github.com/Mostlybonezz/Invoke/actions/runs/38343919533), at source commit `db9b62967b89737676cb18a33bc56716b44185e1`, also passed all 21 tests, simulator launch, IPA packaging/signature checks, and source-feed generation. All three workflow jobs succeeded and [Invoke 1.0.0](https://github.com/Mostlybonezz/Invoke/releases/tag/v1.0.0) was published with five release assets. The downloaded 750 × 1334 native screenshot was visually inspected and shows legible initial onboarding in Ink & Omen, with Invoke typography and ornament. The screen scrolls below the captured viewport; this inspection does not cover the complete app or interactive flows.
 
 | Check | Actual result |
 | --- | --- |
@@ -12,16 +14,20 @@ Environment: Windows, no Swift compiler, Xcode, Apple SDK, Simulator, or connect
 | App icon | PASS: opaque RGB PNG, 1024 × 1024; visually inspected |
 | Source/license snapshot integrity | PASS: 11/11 upstream SHA-256 hashes verified |
 | Source review | Completed across data, views, and effects; concrete findings corrected |
-| Swift type checking / linking | NOT RUN |
-| Metal compilation / shader rendering | NOT RUN |
-| XCTest | 21 methods authored; NOT RUN |
-| Simulator / device / screenshot comparison | NOT RUN |
+| Swift type checking / linking | PASS: simulator and arm64 iOS Release builds, Xcode 16.4 |
+| Metal compilation | PASS: simulator and arm64 iOS Release builds |
+| XCTest | PASS: 21 tests, zero failures; 14 AppStoreTests and 7 StoryFlowTests on iOS 18.5 Simulator |
+| Automated simulator launch / screenshot capture | PASS: run 38343919533; one 750 × 1334 initial onboarding screenshot visually inspected |
+| IPA packaging / signature / feed | PASS: arm64 IPA, local ad-hoc signature checks, generated source metadata, uploaded artifacts |
+| Release publication | PASS: Invoke 1.0.0 published with IPA, source feed, icon, checksum, and build metadata |
+| Physical iPhone / LiveContainer / full UI comparison | NOT RUN |
+| Shader rendering / interactions | NOT MANUALLY VERIFIED |
 | VoiceOver / Dynamic Type / Reduce Motion / contrast | Native support implemented; NOT RUN |
 | Performance / scrolling / GPU / battery | NOT MEASURED |
 
-Grammar parsing cannot catch incorrect Apple API signatures, Swift type-inference failures, missing Metal linkage, runtime issues, or layout problems. Source checking is not a successful build.
+Native compilation and automated tests now supplement the earlier grammar/source checks. They do not establish visual correctness, all user flows, hardware behavior, or LiveContainer compatibility.
 
-## First Mac check: feasibility gate
+## Remaining native checks
 
 Open the shared Invoke scheme with Xcode 16 or later. Build on an iPhone simulator, then actual supported hardware. The Metal file is already in Compile Sources and the MIT notice is already a bundle resource. Start with Settings → Appearance → Try button & card effects. Exercise all three themes and Subtle / Full / Off. Verify the native button fires immediately, the card renders, shader arguments bind correctly, and static alternatives look intentional. Resolve any build/rendering issue before treating the wider effect system as validated.
 
@@ -29,7 +35,7 @@ Run Product → Test. `AppStoreTests.swift` covers defaults, saved/reopened data
 
 ## Manual acceptance matrix
 
-Every row below is **pending native execution**. Repeat the main screens, editor flows, search, sheets, settings, and keepsakes in Ink & Omen, Velvet Observatory, and Astral Theatre.
+Every row below is **pending manual validation**. Automated store tests and simulator launch do not complete this matrix. Repeat the main screens, editor flows, search, sheets, settings, and keepsakes in Ink & Omen, Velvet Observatory, and Astral Theatre.
 
 | Flow | Procedure and expected result |
 | --- | --- |
