@@ -195,6 +195,13 @@ jobs:
           echo "INVOKE_BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
       - name: Require Xcode 27.0 and iOS 27.0 SDKs
         run: python3 Tools/select_xcode.py
+      - name: Install and verify Apple's Metal toolchain
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild -downloadComponent MetalToolchain 2>&1 | tee build/metal-toolchain-install.log
+          xcrun --sdk iphoneos27.0 metal -v 2>&1 | tee build/metal-version.txt
       - name: Check source package
         run: |
           plutil -lint Invoke.xcodeproj/project.pbxproj
@@ -229,6 +236,7 @@ jobs:
           path: |
             build/*.log
             build/xcode-version.txt
+            build/metal-version.txt
             build/toolchain.json
             build/simulator-info.json
             build/test-summary.json
