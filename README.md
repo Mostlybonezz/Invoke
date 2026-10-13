@@ -6,7 +6,7 @@ A private, native iPhone app for authoring a story, living its next believable s
 
 [GitHub build status](https://github.com/Mostlybonezz/Invoke/actions/workflows/ipa.yml) · [Releases](https://github.com/Mostlybonezz/Invoke/releases/latest) · [IPA download](https://github.com/Mostlybonezz/Invoke/releases/latest/download/Invoke.ipa)
 
-The GitHub Actions workflow builds and tests on macOS before publishing a release. Release downloads become available after a successful publishing run. The IPA uses an ad-hoc signature for LiveContainer or another signing tool; it is not App Store or Apple-distribution signed. Downloading it in Safari alone does not install it on your Home Screen.
+The GitHub Actions workflow builds and tests on macOS before publishing a release. [Invoke 1.0.0](https://github.com/Mostlybonezz/Invoke/releases/tag/v1.0.0) is published with the IPA, source feed, icon, checksum, and build metadata. The IPA uses an ad-hoc signature for LiveContainer or another signing tool; it is not App Store or Apple-distribution signed. Downloading it in Safari alone does not install it on your Home Screen.
 
 **LiveContainer source URL:** `https://github.com/Mostlybonezz/Invoke/releases/latest/download/source.json`
 
@@ -45,7 +45,9 @@ xcodebuild -project Invoke.xcodeproj -scheme Invoke \
 
 ## Verification performed here
 
-The implementation environment was Windows. **No Swift build, Metal build, XCTest run, simulator session, iPhone session, native screenshot, VoiceOver run, or performance measurement was possible.**
+Initial source preparation and checks ran on Windows. [GitHub Actions run 38343056754](https://github.com/Mostlybonezz/Invoke/actions/runs/38343056754) subsequently compiled the Swift and Metal sources for the simulator and arm64 iOS Release target using **Xcode 16.4 (16F6)**. On the **iOS 18.5 simulator, all 21 XCTest cases passed with zero failures**: 14 persistence/library tests and 7 story-flow tests.
+
+[Release run 38343919533](https://github.com/Mostlybonezz/Invoke/actions/runs/38343919533) also passed all 21 tests, the automated simulator launch, IPA packaging/signature checks, and source-feed generation, then published [Invoke 1.0.0](https://github.com/Mostlybonezz/Invoke/releases/tag/v1.0.0). One native onboarding screenshot was visually inspected: the Ink & Omen appearance, Invoke typography, ornament, and visible text rendered correctly. This covers the initial screen only. Physical iPhone and LiveContainer operation, complete UI flows, accessibility, shader behavior, and performance remain unverified.
 
 Performed checks:
 
@@ -53,9 +55,9 @@ Performed checks:
 - Checked Xcode object references, source and resource inclusion, shared scheme XML, property lists, asset metadata, and the opaque 1024 × 1024 app icon.
 - Independently reviewed data validation, theme literals, scene/chapter boundaries, draft resumption, and framework API usage; corrected the concrete defects found.
 - Verified all **11 upstream source/license snapshot hashes** against the pinned shader checkout.
-- Authored **21 XCTest methods** covering persistence, image/backup handling, tampering, relationship cleanup, examples, and story-flow integration. These tests remain unexecuted.
+- Executed **21 XCTest cases** covering persistence, image/backup handling, tampering, relationship cleanup, examples, and story-flow integration in native CI; all passed.
 
-The native shader feasibility gate remains open. Feature placements share the prototype implementation so they can be reviewed and tested together; they are not represented as proven GPU behavior.
+Metal compilation passed. The shader rendering and interaction checks remain open; compilation and an automated launch do not establish visual correctness or GPU performance.
 
 ## Source organization
 
@@ -84,4 +86,4 @@ Storage and backups use bounded, in-memory JSON rather than a database/streamed 
 
 After adding source files, run `python3 Tools/generate_project.py` to regenerate the project. Run `python3 Tools/check_source.py` for portable package checks. Installing `tree-sitter` and `tree-sitter-swift` also enables the optional grammar check. `Tools/draw_icon.py` requires Pillow only when regenerating the original app icon; none of these Python packages are app dependencies.
 
-See [Asset inventory](docs/ASSET-INVENTORY.md), [Shader mapping](docs/Shader-Mapping.md), and [Testing checklist](docs/TESTING.md). The Windows source-check results above are historical; the public Actions run and release build report record subsequent native build/test results.
+See [Asset inventory](docs/ASSET-INVENTORY.md), [Shader mapping](docs/Shader-Mapping.md), and [Testing checklist](docs/TESTING.md) for completed checks and remaining device validation.
