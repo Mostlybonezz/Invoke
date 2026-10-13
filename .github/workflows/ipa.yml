@@ -133,6 +133,7 @@ jobs:
           path: |
             build/*.log
             build/xcode-version.txt
+            build/Invoke-first-launch.png
             build/TestResults.xcresult
           if-no-files-found: ignore
           retention-days: 14
