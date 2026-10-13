@@ -1,0 +1,7 @@
+Source checks completed on Windows, October 12, 2026.
+21 Swift files: tree-sitter-swift 0.7.4 grammar parsing passed.
+1 Metal file included; no Metal compilation performed.
+21 XCTest methods included; no XCTest execution performed.
+Xcode source/resource references, XML scheme, property lists, assets passed package checks.
+11 of 11 upstream shader source/license snapshot hashes match.
+No native build, simulator, device, accessibility, or performance test executed.

@@ -1,0 +1,52 @@
+{
+  "repository": "https://github.com/shader-effects-inc/shaders",
+  "revision": "81fd4ece5d493ca6c424a2af41f0e2c361ec8258",
+  "retrievedDate": "2026-10-12",
+  "license": "MIT",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "3746c53be86a03a89eb34b9771fc72e2f7d8a8d4da0607316802d274e2dabcd6"
+    },
+    {
+      "path": "README.md",
+      "sha256": "08b2560130f7dd917ee34d8eca585fbfc6c1a019ef9a578ff55316062d755458"
+    },
+    {
+      "path": "packages/core/src/shaders/Ripples/index.ts",
+      "sha256": "ffb8a8bb8ad346802fb2945f69a2bb01510482aef65195ee124cca9a0aeb1952"
+    },
+    {
+      "path": "packages/core/src/shaders/Beam/index.ts",
+      "sha256": "24c1ec82435d8be782cfc77ec8a165154fc4e1a25a3b6b319f53b5099288ce6f"
+    },
+    {
+      "path": "packages/core/src/shaders/Sparkle/index.ts",
+      "sha256": "ae0eb566de5b8454fa2961b94caefdf61296a8235596cb961a57df1df5c831f0"
+    },
+    {
+      "path": "packages/core/src/std/paint/patterns.ts",
+      "sha256": "3e89d95da7267e1cc09934d1c6f0c2ae5117c9943de8dc81dc08fa8da445c7cb"
+    },
+    {
+      "path": "packages/core/src/std/paint/gradients.ts",
+      "sha256": "81364fe808277c3d638b53c7b608570ffbd47dbddba894121362f08b16a82017"
+    },
+    {
+      "path": "packages/core/src/std/paint/light.ts",
+      "sha256": "6af038f14fc544f57a0eb5b950376dd703783e53fcd846d3fd51535421fb8c61"
+    },
+    {
+      "path": "packages/core/src/gpu/kit/patternPaints.ts",
+      "sha256": "0b85970452f12d9a0dbb03ca52d2b97304c93b0cf99d4a0cbe936a033842defa"
+    },
+    {
+      "path": "packages/core/src/gpu/kit/gradientPaints.ts",
+      "sha256": "1d4c54e75b7ebfe86aafff2a5187643369ad8b326a130e8fad90870590e56b81"
+    },
+    {
+      "path": "packages/core/src/gpu/kit/lightfields.ts",
+      "sha256": "280fbd38e8795616946414cac310a061fdefe38a41957ccf73046e4c24a22e05"
+    }
+  ]
+}

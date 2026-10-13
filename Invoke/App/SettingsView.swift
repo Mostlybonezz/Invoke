@@ -1,0 +1,149 @@
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct SettingsView: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.invokeTheme) private var theme
+    @State private var backup: BackupDocument?
+    @State private var exporting = false
+    @State private var importing = false
+    @State private var validating = false
+    @State private var proposedRestore: BackupPayload?
+    @State private var reviewRestore = false
+    @State private var confirmRestore = false
+    @State private var removeExamples = false
+    @State private var exportMessage = ""
+    @State private var exportAfterReview = false
+    var body: some View {
+        Form {
+            Section {
+                NavigationLink { AppearanceView() } label: { Label("Appearance", systemImage: "paintpalette") }
+                Text("\(theme.name) · \(store.data.preferences.effects.capitalized) effects").foregroundStyle(theme.secondary)
+            }
+            Section("Your writing, on this iPhone") {
+                Label(store.saveState, systemImage: "internaldrive")
+                Text("Invoke works offline. It does not use an account, analytics, an AI service, or cloud synchronization. Writing and imported photographs are stored in the app’s protected local storage.")
+                Text("Deleting Invoke can delete its local data. Export a complete backup regularly to a location you choose in Files. Device backups depend on your iPhone settings.").font(.footnote).foregroundStyle(theme.secondary)
+                Button { exportBackup() } label: { Label("Export complete backup", systemImage: "square.and.arrow.up") }
+                Button { importing = true } label: { Label(validating ? "Validating backup…" : "Restore from backup", systemImage: "square.and.arrow.down") }.disabled(validating)
+                if !exportMessage.isEmpty { Text(exportMessage).font(.footnote).foregroundStyle(theme.secondary) }
+                if let url = store.lastRecoveryBackupURL { ShareLink(item: url) { Label("Save pre-restore recovery copy", systemImage: "arrow.uturn.backward") } }
+                Button("Retry saving now") { store.flush() }
+            }
+            Section("Example collection") {
+                Text("A creative visibility quest, an intentional home, and a discovery story. All example records are labeled.").font(.subheadline)
+                Button("Add example collection") { store.loadExamples() }
+                Button("Remove example collection", role: .destructive) { removeExamples = true }
+            }
+            Section("About Invoke") {
+                Text("Author → Rehearse → Act → Reflect → Revise")
+                Text("Version 1.0 · Private first version\nRequires iOS 17 or later.").font(.footnote)
+                NavigationLink("Shader acknowledgments") { ShaderAcknowledgmentsView() }
+            }
+        }.navigationTitle("Settings").invokeScreen()
+            .fileExporter(isPresented: $exporting, document: backup, contentType: .invokeBackup, defaultFilename: "Invoke-\(Date().formatted(.iso8601.year().month().day().dateSeparator(.dash)))") { result in
+                switch result {
+                case .success: exportMessage = "Backup exported, including every referenced photograph."
+                case .failure(let error): store.errorMessage = "Could not export the backup: \(error.localizedDescription)"
+                }
+            }
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.invokeBackup, .json]) { result in
+                switch result {
+                case .success(let url): validateImport(url)
+                case .failure(let error): store.errorMessage = "Could not open the backup: \(error.localizedDescription)"
+                }
+            }
+            .sheet(isPresented: $reviewRestore, onDismiss: {
+                if exportAfterReview { exportAfterReview = false; exportBackup() }
+            }) {
+                NavigationStack {
+                    ScrollView { VStack(alignment: .leading, spacing: 22) {
+                        Text("Review this restoration").font(.largeTitle).fontDesign(.serif)
+                        if let payload = proposedRestore {
+                            Text("Backup from \(payload.exportedAt.formatted(date: .abbreviated, time: .shortened))")
+                            Text("\(payload.data.stories.count) stories · \(payload.data.entries.count) Grimoire entries · \(payload.data.relics.count) relics · \(payload.images.count) images")
+                        }
+                        Text("Restoring replaces all current stories, entries, relics, photos, reflections, and appearance preferences with this backup. This is a replacement, not a merge.")
+                        Text("Export your current collection first. Invoke also creates a local recovery copy before replacing anything.").foregroundStyle(theme.secondary)
+                        Button("Export current collection first") { exportAfterReview = true; reviewRestore = false }.buttonStyle(.bordered).frame(minHeight: 44)
+                        Text("After export, choose Restore from backup again to continue.").font(.footnote).foregroundStyle(theme.secondary)
+                        Button("Replace with this backup", role: .destructive) { confirmRestore = true }.buttonStyle(.borderedProminent).frame(minHeight: 44)
+                    }.padding(24) }.invokeScreen()
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { reviewRestore = false; proposedRestore = nil } } }
+                        .alert("Replace your current collection?", isPresented: $confirmRestore) {
+                            Button("Replace & restore", role: .destructive) {
+                                guard let payload = proposedRestore else { return }
+                                do { try store.restore(payload); reviewRestore = false; proposedRestore = nil; exportMessage = store.lastRecoveryBackupURL == nil ? "Restored. The previous local files were preserved for recovery." : "Restored. A pre-restore recovery backup is available below." }
+                                catch { reviewRestore = false; store.errorMessage = error.localizedDescription }
+                            }
+                            Button("Cancel", role: .cancel) { }
+                        } message: { Text("The validated backup will replace the current collection. A recovery backup is saved first.") }
+                }.environment(\.invokeTheme, theme).preferredColorScheme(theme.scheme)
+            }
+            .confirmationDialog("Remove all example records?", isPresented: $removeExamples, titleVisibility: .visible) {
+                Button("Remove examples", role: .destructive) { store.removeExamples() }
+            } message: { Text("Example stories and their example entries, relics, and reflections will be removed, including changes you made to them. Personal records remain; links to removed examples will be cleared.") }
+    }
+    private func exportBackup() {
+        do { backup = try store.makeBackup(); exporting = true }
+        catch { store.errorMessage = error.localizedDescription }
+    }
+    private func validateImport(_ url: URL) {
+        validating = true
+        Task { @MainActor in
+            do {
+                let payload = try await Task.detached(priority: .userInitiated) {
+                    let accessed = url.startAccessingSecurityScopedResource()
+                    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                    let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                    guard size <= BackupValidation.maximumBackupBytes else { throw InvokeDataError.invalidBackup("The selected file exceeds the 512 MB limit.") }
+                    return try BackupValidation.decode(Data(contentsOf: url, options: .mappedIfSafe))
+                }.value
+                proposedRestore = payload; reviewRestore = true
+            } catch { store.errorMessage = error.localizedDescription }
+            validating = false
+        }
+    }
+}
+
+struct AppearanceView: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.invokeTheme) private var theme
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                Text("Three ways to hold a story.").font(.largeTitle).fontDesign(.serif)
+                Text("Your stories stay yours. Only the atmosphere changes.").foregroundStyle(theme.secondary)
+                ForEach(InvokeTheme.all) { option in
+                    Button { store.data.preferences.theme = option.id; store.flush() } label: {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack { Text(option.name).font(.title3).fontDesign(.serif); Spacer(); Image(systemName: theme.id == option.id ? "checkmark.circle.fill" : "circle") }
+                            HStack(spacing: 14) {
+                                Image(systemName: option.id == "ink" ? "leaf" : option.id == "velvet" ? "moon.stars" : "theatermasks").font(.largeTitle).foregroundStyle(option.accent)
+                                VStack(alignment: .leading, spacing: 8) { Text("Your next chapter").font(.title2).fontDesign(.serif); Text("Enter the scene →").font(.caption.weight(.semibold)).padding(10).background(option.button, in: Capsule()).foregroundStyle(option.buttonText) }
+                            }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(option.surface, in: RoundedRectangle(cornerRadius: 10)).overlay(ThemeScenery().environment(\.invokeTheme, option))
+                            Text(option.subtitle).font(.subheadline).foregroundStyle(option.secondary)
+                        }.padding(18).foregroundStyle(option.text).background(option.background, in: RoundedRectangle(cornerRadius: 16))
+                            .overlay(RoundedRectangle(cornerRadius: 16).stroke(theme.id == option.id ? option.accent : option.border, lineWidth: theme.id == option.id ? 2 : 0.8))
+                    }.buttonStyle(.plain).accessibilityLabel(option.name + (theme.id == option.id ? ", selected" : ""))
+                        .accessibilityAddTraits(theme.id == option.id ? .isSelected : [])
+                }
+                SectionEyebrow(text: "Effects")
+                Picker("Effects", selection: $store.data.preferences.effects) { Text("Subtle").tag("subtle"); Text("Full").tag("full"); Text("Off").tag("off") }.pickerStyle(.segmented)
+                Text("Brief effects mark actions. Reduce Motion, Low Power Mode, and inactive screens use static decoration. Writing screens stay quiet.").font(.footnote).foregroundStyle(theme.secondary)
+                NavigationLink { EffectsLabView(theme: InvokeEffectTheme(rawValue: theme.id) ?? .ink, level: InvokeEffectLevel(rawValue: store.data.preferences.effects) ?? .subtle) } label: { Label("Try button & card effects", systemImage: "sparkles").frame(minHeight: 44) }
+            }.padding(20)
+        }.navigationTitle("Appearance").invokeScreen()
+    }
+}
+
+struct ShaderAcknowledgmentsView: View {
+    var body: some View {
+        ScrollView { VStack(alignment: .leading, spacing: 20) {
+            Text("Native adaptations").font(.title).fontDesign(.serif)
+            Text("Invoke’s decorative Metal effects adapt Ripples, Beam, and Sparkle from shader-effects-inc/shaders. The web package itself is not embedded. Revision: 81fd4ece5d493ca6c424a2af41f0e2c361ec8258.")
+            Link("Original shader repository", destination: URL(string: "https://github.com/shader-effects-inc/shaders")!)
+            Text((try? String(contentsOf: Bundle.main.url(forResource: "ShaderLicense", withExtension: "txt") ?? URL(fileURLWithPath: "/unavailable"), encoding: .utf8)) ?? "See ThirdParty/shader-effects-inc/shaders/LICENSE in the source project.").font(.footnote).textSelection(.enabled)
+        }.padding(20) }.navigationTitle("Acknowledgments").invokeScreen()
+    }
+}
