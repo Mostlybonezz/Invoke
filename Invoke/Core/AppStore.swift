@@ -103,10 +103,51 @@ final class AppStore: ObservableObject {
                 throw InvokeDataError.missingPhoto(name)
             }
         }
-        suppressAutosave = true
-        data = snapshot.data
-        suppressAutosave = false
-        lastSnapshotBytes = bytes
+        if snapshot.data.schemaVersion == 1 {
+            // Preserve the complete original generation, including fields this version
+            // does not understand, before committing an additive upgrade.
+            var upgraded = snapshot.data
+            upgraded.schemaVersion = AppData.currentSchemaVersion
+            try BackupValidation.validateRecords(upgraded)
+            let oldGeneration = generationURL
+            let nextName = UUID().uuidString
+            let staged = directory.appendingPathComponent("generations", isDirectory: true).appendingPathComponent(nextName, isDirectory: true)
+            try fileManager.createDirectory(at: staged, withIntermediateDirectories: true)
+            do {
+                let stagedImages = staged.appendingPathComponent("images", isDirectory: true)
+                try fileManager.createDirectory(at: stagedImages, withIntermediateDirectories: true)
+                var assets: [String: BackupAsset] = [:]
+                for name in BackupValidation.imageNames(in: snapshot.data) {
+                    let imageBytes = try Data(contentsOf: oldGeneration.appendingPathComponent("images").appendingPathComponent(name))
+                    try writeProtected(imageBytes, to: stagedImages.appendingPathComponent(name))
+                    assets[name] = BackupAsset(bytes: imageBytes)
+                }
+                let recovery = directory.appendingPathComponent("recovery", isDirectory: true)
+                try fileManager.createDirectory(at: recovery, withIntermediateDirectories: true)
+                let recoveryURL = recovery.appendingPathComponent("Before-2.0-\(nextName).invoke")
+                try writeProtected(try PersistenceCoding.encoder().encode(BackupPayload(data: snapshot.data, images: assets)), to: recoveryURL)
+                try writeProtected(bytes, to: staged.appendingPathComponent("legacy-schema-1.json"))
+                let upgradedBytes = try PersistenceCoding.encoder().encode(DiskSnapshot(data: upgraded))
+                try writeProtected(upgradedBytes, to: staged.appendingPathComponent("data.json"))
+                let verified = try PersistenceCoding.decoder().decode(DiskSnapshot.self, from: Data(contentsOf: staged.appendingPathComponent("data.json")))
+                try BackupValidation.validateRecords(verified.data)
+                guard try Data(contentsOf: staged.appendingPathComponent("data.json")) == upgradedBytes else { throw InvokeDataError.invalidBackup("Upgrade verification failed.") }
+                // Only this atomic pointer change commits the migration. Old storage is retained.
+                try writeProtected(Data(nextName.utf8), to: pointerURL)
+                generationName = nextName
+                lastRecoveryBackupURL = recoveryURL
+                suppressAutosave = true; data = upgraded; suppressAutosave = false
+                lastSnapshotBytes = upgradedBytes
+            } catch {
+                try? fileManager.removeItem(at: staged)
+                throw error
+            }
+        } else {
+            suppressAutosave = true
+            data = snapshot.data
+            suppressAutosave = false
+            lastSnapshotBytes = bytes
+        }
     }
 
     private func scheduleSave() {
@@ -128,36 +169,37 @@ final class AppStore: ObservableObject {
             return
         }
         do {
-            guard !diskWritesBlocked else {
-                throw InvokeDataError.storageUnavailable("Existing files need recovery in Settings before autosaving can resume.")
-            }
-            var next = data
-            try BackupValidation.validateRecords(next)
-            Self.stampChanges(in: &next, comparedWith: lastPersisted)
-            for name in BackupValidation.imageNames(in: next) {
-                guard fileManager.fileExists(atPath: imagesURL.appendingPathComponent(name).path) else {
-                    throw InvokeDataError.missingPhoto(name)
-                }
-            }
-            let bytes = try PersistenceCoding.encoder().encode(DiskSnapshot(data: next))
-            if let previous = lastSnapshotBytes {
-                try writeProtected(previous, to: generationURL.appendingPathComponent("previous.json"))
-            }
-            try writeProtected(bytes, to: generationURL.appendingPathComponent("data.json"))
-            let previousData = lastPersisted
-            lastPersisted = next
-            lastSnapshotBytes = bytes
-            suppressAutosave = true
-            data = next
-            suppressAutosave = false
-            pendingImportFiles.subtract(BackupValidation.imageNames(in: next))
-            removeUnusedPhotos(keeping: BackupValidation.imageNames(in: next)
-                .union(BackupValidation.imageNames(in: previousData)).union(pendingImportFiles))
-            saveState = "Saved on this iPhone"
+            try commitSnapshot(data)
         } catch {
             saveState = "Not saved — tap to retry"
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// New discrete actions publish success only after the durable atomic write.
+    /// The legacy prose autosave still retains its draft when this throws.
+    func commitSnapshot(_ candidate: AppData) throws {
+        guard !diskWritesBlocked else {
+            throw InvokeDataError.storageUnavailable("Existing files need recovery in Settings before autosaving can resume.")
+        }
+        var next = candidate
+        next.schemaVersion = AppData.currentSchemaVersion
+        try BackupValidation.validateRecords(next)
+        Self.stampChanges(in: &next, comparedWith: lastPersisted)
+        for name in BackupValidation.imageNames(in: next) {
+            guard fileManager.fileExists(atPath: imagesURL.appendingPathComponent(name).path) else { throw InvokeDataError.missingPhoto(name) }
+        }
+        let bytes = try PersistenceCoding.encoder().encode(DiskSnapshot(data: next))
+        if let previous = lastSnapshotBytes { try writeProtected(previous, to: generationURL.appendingPathComponent("previous.json")) }
+        try writeProtected(bytes, to: generationURL.appendingPathComponent("data.json"))
+        let previousData = lastPersisted
+        lastPersisted = next; lastSnapshotBytes = bytes
+        scheduledSave?.cancel(); scheduledSave = nil
+        suppressAutosave = true; data = next; suppressAutosave = false
+        pendingImportFiles.subtract(BackupValidation.imageNames(in: next))
+        removeUnusedPhotos(keeping: BackupValidation.imageNames(in: next)
+            .union(BackupValidation.imageNames(in: previousData)).union(pendingImportFiles))
+        saveState = "Saved on this iPhone"
     }
 
     func imageURL(_ fileName: String) -> URL? {
@@ -225,6 +267,9 @@ final class AppStore: ObservableObject {
     /// switch a tiny pointer. Any validation or write failure leaves the old generation active.
     func restore(_ payload: BackupPayload) throws {
         try BackupValidation.validate(payload)
+        var restoredData = payload.data
+        restoredData.schemaVersion = AppData.currentSchemaVersion
+        try BackupValidation.validateRecords(restoredData)
         let nextName = UUID().uuidString
         let nextDirectory = directory.appendingPathComponent("generations", isDirectory: true)
             .appendingPathComponent(nextName, isDirectory: true)
@@ -233,7 +278,7 @@ final class AppStore: ObservableObject {
         try fileManager.createDirectory(at: nextImages, withIntermediateDirectories: true)
         do {
             for (name, asset) in payload.images { try writeProtected(asset.bytes, to: nextImages.appendingPathComponent(name)) }
-            let bytes = try PersistenceCoding.encoder().encode(DiskSnapshot(data: payload.data))
+            let bytes = try PersistenceCoding.encoder().encode(DiskSnapshot(data: restoredData))
             try writeProtected(bytes, to: nextDirectory.appendingPathComponent("data.json"))
             try fileManager.createDirectory(at: recoveryDirectory, withIntermediateDirectories: true)
             let recoveryURL = recoveryDirectory.appendingPathComponent("Before-restore-\(UUID().uuidString).invoke")
@@ -247,10 +292,10 @@ final class AppStore: ObservableObject {
             scheduledSave = nil
             generationName = nextName
             lastSnapshotBytes = bytes
-            lastPersisted = payload.data
+            lastPersisted = restoredData
             pendingImportFiles = []
             suppressAutosave = true
-            data = payload.data
+            data = restoredData
             suppressAutosave = false
             lastRecoveryBackupURL = diskWritesBlocked ? nil : recoveryURL
             diskWritesBlocked = false
@@ -360,6 +405,17 @@ final class AppStore: ObservableObject {
         let ritualIDs = Set(data.entries.filter { $0.kind == .ritual }.map(\.id))
         data.ritualLogs.removeAll { !ritualIDs.contains($0.ritualID) }
         if let id = data.preferences.pinnedStoryID, !storyIDs.contains(id) { data.preferences.pinnedStoryID = nil }
+        for i in data.grimoire.practices.indices {
+            if let id = data.grimoire.practices[i].legacyEntryID, !entryIDs.contains(id) { data.grimoire.practices[i].legacyEntryID = nil }
+            if let id = data.grimoire.practices[i].legacySceneID, !sceneIDs.contains(id) { data.grimoire.practices[i].legacySceneID = nil }
+        }
+        for i in data.grimoire.invocations.indices {
+            if let id = data.grimoire.invocations[i].legacyEntryID, !entryIDs.contains(id) { data.grimoire.invocations[i].legacyEntryID = nil }
+            if let id = data.grimoire.invocations[i].legacyStoryID, !storyIDs.contains(id) { data.grimoire.invocations[i].legacyStoryID = nil }
+        }
+        for i in data.grimoire.arcana.indices {
+            if let id = data.grimoire.arcana[i].legacyEntryID, !entryIDs.contains(id) { data.grimoire.arcana[i].legacyEntryID = nil }
+        }
     }
 
     private static func unique(_ ids: [UUID]) -> [UUID] {

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "minimumUnitTests": 100,
+  "minimumUITests": 8,
+  "requiredScreenshots": [
+    "01-Astral-onboarding",
+    "03-Expanded-constellation",
+    "04-Scene-script",
+    "05-Edited-scene-script",
+    "20-Quest-recorded",
+    "21-Chronicle-correction",
+    "22-Invocation-linked-action",
+    "23-Invocation-reopened",
+    "24-Codex-practice-preview",
+    "25-Activated-practice-Today",
+    "26-Saved-method",
+    "27-Echo-sources-reopened",
+    "30-Today-accessibility-text",
+    "31-Today-small-ink",
+    "31-Today-small-velvet",
+    "31-Today-small-astral"
+  ]
+}

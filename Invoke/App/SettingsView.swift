@@ -19,6 +19,7 @@ struct SettingsView: View {
         Form {
             Section {
                 NavigationLink { AppearanceView() } label: { Label("Appearance", systemImage: "paintpalette") }
+                NavigationLink { LivingSettingsView(settings: store.data.grimoire.settings) } label: { Label("Calendar, reminders & restoration", systemImage: "calendar.badge.clock") }.accessibilityIdentifier("living-settings")
                 Text("\(theme.name) · \(store.data.preferences.effects.capitalized) effects").foregroundStyle(theme.secondary)
                     .accessibilityIdentifier("appearance-current-theme").accessibilityValue(theme.id)
             }
@@ -66,8 +67,15 @@ struct SettingsView: View {
                         if let payload = proposedRestore {
                             Text("Backup from \(payload.exportedAt.formatted(date: .abbreviated, time: .shortened))")
                             Text("\(payload.data.stories.count) stories · \(payload.data.entries.count) Grimoire entries · \(payload.data.relics.count) relics · \(payload.images.count) images")
+                            Text("\(payload.data.grimoire.practices.count) practices · \(payload.data.grimoire.actions.count) action records · \(payload.data.grimoire.invocations.count) Invocations · \(payload.data.grimoire.assets.count) assets")
+                            Text("\(payload.data.grimoire.spells.count) Spells · \(payload.data.grimoire.enchantments.count) Enchantments · \(payload.data.grimoire.arcana.count) Arcana records · \(payload.data.grimoire.echoes.count) Echoes · \(payload.data.grimoire.revisions.count) revisions")
+                            Text(mergeSummary(payload)).font(.footnote).foregroundStyle(theme.secondary)
+                            Button("Merge new records into my collection") {
+                                do { try store.mergeBackup(payload); reviewRestore = false; proposedRestore = nil; exportMessage = "Merged new records. Existing records and preferences were kept." }
+                                catch { store.errorMessage = error.localizedDescription }
+                            }.buttonStyle(.bordered).frame(minHeight: 44)
                         }
-                        Text("Restoring replaces all current stories, entries, relics, photos, reflections, and appearance preferences with this backup. This is a replacement, not a merge.")
+                        Text("Merge adds records with new identities and keeps your current records on every identity conflict. Current preferences are kept. Replace instead restores the complete backup, including all records, history, photos, and preferences.")
                         Text("Export your current collection first. Invoke also creates a local recovery copy before replacing anything.").foregroundStyle(theme.secondary)
                         Button("Export current collection first") { exportAfterReview = true; reviewRestore = false }.buttonStyle(.bordered).frame(minHeight: 44)
                         Text("After export, choose Restore from backup again to continue.").font(.footnote).foregroundStyle(theme.secondary)
@@ -91,6 +99,15 @@ struct SettingsView: View {
     private func exportBackup() {
         do { backup = try store.makeBackup(); exporting = true }
         catch { store.errorMessage = error.localizedDescription }
+    }
+    private func mergeSummary(_ payload: BackupPayload) -> String {
+        func overlap<T: Identifiable>(_ current: [T], _ incoming: [T]) -> Int where T.ID: Hashable { Set(current.map(\.id)).intersection(Set(incoming.map(\.id))).count }
+        let a = store.data, b = payload.data
+        var counts = [overlap(a.stories, b.stories), overlap(a.chapters, b.chapters), overlap(a.scenes, b.scenes), overlap(a.entries, b.entries), overlap(a.relics, b.relics), overlap(a.reflections, b.reflections), overlap(a.ritualLogs, b.ritualLogs)]
+        let x = a.grimoire, y = b.grimoire
+        counts += [overlap(x.practices, y.practices), overlap(x.occurrences, y.occurrences), overlap(x.actions, y.actions), overlap(x.invocations, y.invocations), overlap(x.spells, y.spells), overlap(x.enchantments, y.enchantments), overlap(x.assets, y.assets), overlap(x.arcana, y.arcana), overlap(x.echoes, y.echoes), overlap(x.events, y.events), overlap(x.revisions, y.revisions)]
+        let duplicates = counts.reduce(0, +)
+        return "Merge preview: \(duplicates) record identities already exist here and will keep their current values. Conflicting image contents are rejected before anything changes. A recovery copy is saved before import."
     }
     private func validateImport(_ url: URL) {
         validating = true

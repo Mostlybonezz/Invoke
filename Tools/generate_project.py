@@ -21,10 +21,12 @@ def settings(values):
     return "{ " + " ".join(f"{k} = {q(v)};" for k, v in values.items()) + " }"
 
 sources = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / 'Invoke').rglob('*') if p.suffix in ('.swift', '.metal'))
-tests = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / 'InvokeTests').glob('*.swift'))
-ui_tests = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / 'InvokeUITests').glob('*.swift'))
-resources = ['Invoke/Assets.xcassets', 'Invoke/Resources/PrivacyInfo.xcprivacy', 'Invoke/Effects/ShaderLicense.txt']
-filetypes = {'.swift': 'sourcecode.swift', '.metal': 'sourcecode.metal', '.xcassets': 'folder.assetcatalog', '.xcprivacy': 'text.xml', '.txt': 'text'}
+tests = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / 'InvokeTests').rglob('*.swift'))
+ui_tests = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / 'InvokeUITests').rglob('*.swift'))
+resources = ['Invoke/Assets.xcassets', 'Invoke/Effects/ShaderLicense.txt'] + sorted(
+    p.relative_to(ROOT).as_posix() for p in (ROOT / 'Invoke/Resources').rglob('*')
+    if p.is_file() and p.name != 'Info.plist' and p.suffix in ('.json', '.xcprivacy', '.txt'))
+filetypes = {'.swift': 'sourcecode.swift', '.metal': 'sourcecode.metal', '.xcassets': 'folder.assetcatalog', '.xcprivacy': 'text.xml', '.json': 'text.json', '.txt': 'text'}
 for path in sources + tests + ui_tests + resources:
     obj('file:' + path, 'PBXFileReference', f'lastKnownFileType = {filetypes.get(Path(path).suffix, "text")}; path = {q(path)}; sourceTree = "<group>";')
     obj('build:' + path, 'PBXBuildFile', f'fileRef = {uid("file:" + path)};')
@@ -52,7 +54,7 @@ for config in ['Debug', 'Release']:
     b = base | {'SWIFT_OPTIMIZATION_LEVEL': '-Onone' if config == 'Debug' else '-O', 'DEBUG_INFORMATION_FORMAT': 'dwarf' if config == 'Debug' else 'dwarf-with-dsym', 'ENABLE_TESTABILITY': 'YES' if config == 'Debug' else 'NO', 'ONLY_ACTIVE_ARCH': 'YES' if config == 'Debug' else 'NO'}
     if config == 'Debug': b['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = 'DEBUG $(inherited)'
     obj('project-' + config, 'XCBuildConfiguration', f'buildSettings = {settings(b)}; name = {config};')
-    app = {'ASSETCATALOG_COMPILER_APPICON_NAME': 'AppIcon', 'CODE_SIGN_STYLE': 'Automatic', 'CURRENT_PROJECT_VERSION': '1', 'GENERATE_INFOPLIST_FILE': 'NO', 'INFOPLIST_FILE': 'Invoke/Resources/Info.plist', 'LD_RUNPATH_SEARCH_PATHS': '$(inherited) @executable_path/Frameworks', 'MARKETING_VERSION': '1.1.0', 'PRODUCT_BUNDLE_IDENTIFIER': 'app.invoke.personal', 'PRODUCT_NAME': '$(TARGET_NAME)', 'SUPPORTED_PLATFORMS': 'iphoneos iphonesimulator', 'SUPPORTS_MACCATALYST': 'NO', 'TARGETED_DEVICE_FAMILY': '1', 'ENABLE_PREVIEWS': 'YES', 'MTL_ENABLE_DEBUG_INFO': 'INCLUDE_SOURCE' if config == 'Debug' else 'NO'}
+    app = {'ASSETCATALOG_COMPILER_APPICON_NAME': 'AppIcon', 'CODE_SIGN_STYLE': 'Automatic', 'CURRENT_PROJECT_VERSION': '1', 'GENERATE_INFOPLIST_FILE': 'NO', 'INFOPLIST_FILE': 'Invoke/Resources/Info.plist', 'LD_RUNPATH_SEARCH_PATHS': '$(inherited) @executable_path/Frameworks', 'MARKETING_VERSION': '2.0.0', 'PRODUCT_BUNDLE_IDENTIFIER': 'app.invoke.personal', 'PRODUCT_NAME': '$(TARGET_NAME)', 'SUPPORTED_PLATFORMS': 'iphoneos iphonesimulator', 'SUPPORTS_MACCATALYST': 'NO', 'TARGETED_DEVICE_FAMILY': '1', 'ENABLE_PREVIEWS': 'YES', 'MTL_ENABLE_DEBUG_INFO': 'INCLUDE_SOURCE' if config == 'Debug' else 'NO'}
     obj('app-' + config, 'XCBuildConfiguration', f'buildSettings = {settings(app)}; name = {config};')
     test = {'BUNDLE_LOADER': '$(TEST_HOST)', 'CODE_SIGN_STYLE': 'Automatic', 'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'app.invoke.personal.tests', 'PRODUCT_NAME': '$(TARGET_NAME)', 'TARGETED_DEVICE_FAMILY': '1', 'TEST_HOST': '$(BUILT_PRODUCTS_DIR)/Invoke.app/Invoke', 'LD_RUNPATH_SEARCH_PATHS': '$(inherited) @executable_path/Frameworks @loader_path/Frameworks'}
     obj('test-' + config, 'XCBuildConfiguration', f'buildSettings = {settings(test)}; name = {config};')

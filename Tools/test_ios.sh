@@ -33,7 +33,7 @@ Path('build/simulator-info.json').write_text(json.dumps(metadata, indent=2) + '\
 print(device['udid'])
 PY
 )"
-echo "Testing on exact iOS 27.0 simulator $simulator_id with a 15-minute suite deadline"
+echo "Testing on exact iOS 27.0 simulator $simulator_id with a 25-minute suite deadline"
 python3 - "$simulator_id" <<'PY'
 import json
 import os
@@ -89,9 +89,9 @@ with open('build/tests.log', 'wb') as log, open('build/tests.log', 'r', errors='
         output = reader.read()
         if output:
             print(output, end='', flush=True)
-        if time.monotonic() - started >= 900:
+        if time.monotonic() - started >= 1500:
             timed_out = True
-            print('\nXCTest exceeded the 15-minute wall-clock limit; interrupting to preserve xcresult.', flush=True)
+            print('\nXCTest exceeded the 25-minute wall-clock limit; interrupting to preserve xcresult.', flush=True)
             signal_process_group(process, signal.SIGINT)
             try:
                 process.wait(timeout=30)
@@ -116,6 +116,6 @@ metadata_path = Path('build/simulator-info.json')
 metadata = json.loads(metadata_path.read_text())
 metadata['testStatus'] = 'passed'
 metadata['nativeLaunchScreenshot'] = 'XCTest attachments'
-metadata['nativeLaunchValidation'] = 'Passed: 2 XCUITest flows'
+metadata['nativeLaunchValidation'] = 'XCTest passed; retained UI evidence is verified before packaging'
 metadata_path.write_text(json.dumps(metadata, indent=2) + '\n')
 PY

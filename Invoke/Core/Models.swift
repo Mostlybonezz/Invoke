@@ -1,8 +1,8 @@
 import Foundation
 
-/// Schema 1 is intentionally plain Codable: no account, network, or cloud dependency.
+/// Legacy records remain intact; schema 2 adds the Living Grimoire alongside them.
 struct AppData: Codable, Equatable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
     var schemaVersion = currentSchemaVersion
     var stories: [Story] = []
     var chapters: [Chapter] = []
@@ -12,6 +12,28 @@ struct AppData: Codable, Equatable {
     var reflections: [Reflection] = []
     var ritualLogs: [RitualLog] = []
     var preferences = Preferences()
+    var grimoire = GrimoireData()
+}
+
+extension AppData {
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, stories, chapters, scenes, entries, relics, reflections, ritualLogs, preferences, grimoire
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        guard (1...Self.currentSchemaVersion).contains(schemaVersion) else { throw InvokeDataError.unsupportedVersion(schemaVersion) }
+        stories = try values.decode([Story].self, forKey: .stories)
+        chapters = try values.decode([Chapter].self, forKey: .chapters)
+        scenes = try values.decode([Scene].self, forKey: .scenes)
+        entries = try values.decode([LibraryEntry].self, forKey: .entries)
+        relics = try values.decode([Relic].self, forKey: .relics)
+        reflections = try values.decode([Reflection].self, forKey: .reflections)
+        ritualLogs = try values.decode([RitualLog].self, forKey: .ritualLogs)
+        preferences = try values.decode(Preferences.self, forKey: .preferences)
+        if schemaVersion == 1 { grimoire = GrimoireData() }
+        else { grimoire = try values.decode(GrimoireData.self, forKey: .grimoire) }
+    }
 }
 
 struct Preferences: Codable, Equatable {

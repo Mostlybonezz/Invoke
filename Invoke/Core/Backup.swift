@@ -149,7 +149,7 @@ enum BackupValidation {
     }
 
     static func validateRecords(_ data: AppData) throws {
-        guard data.schemaVersion == AppData.currentSchemaVersion else {
+        guard (1...AppData.currentSchemaVersion).contains(data.schemaVersion) else {
             throw InvokeDataError.unsupportedVersion(data.schemaVersion)
         }
         guard ["ink", "velvet", "astral"].contains(data.preferences.theme),
@@ -230,5 +230,6 @@ enum BackupValidation {
         for log in data.ritualLogs { try require(rituals.contains(log.ritualID)) }
         if let id = data.preferences.pinnedStoryID { try require(stories[id] != nil) }
         try require(imageNames(in: data).allSatisfy(isSafeImageName))
+        if data.schemaVersion == 2 { try GrimoireValidation.validate(data.grimoire, legacy: data) }
     }
 }

@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 project_root="$PWD"
-version="${INVOKE_VERSION:-1.1.0}"
+version="${INVOKE_VERSION:-2.0.0}"
 build_number="${INVOKE_BUILD_NUMBER:-1}"
 if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$build_number" =~ ^[1-9][0-9]*$ ]]; then
   echo "Expected INVOKE_VERSION=major.minor.patch and positive INVOKE_BUILD_NUMBER." >&2
@@ -15,61 +15,9 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 mkdir -p build/release
-# Require successful native test evidence before compiling or packaging in CI.
-python3 - <<'PY'
-import json
-import os
-from pathlib import Path
+# Source-derived counts and retained screenshots prevent publishing a partial suite.
+python3 Tools/verify_test_evidence.py
 
-simulator_path = Path('build/simulator-info.json')
-simulator = json.loads(simulator_path.read_text()) if simulator_path.exists() else None
-test_summary_path = Path('build/test-summary.json')
-test_summary = json.loads(test_summary_path.read_text()) if test_summary_path.exists() else None
-attachment_dir = Path('build/ui-screenshots')
-manifest_path = attachment_dir / 'manifest.json'
-ui_screenshots = []
-if manifest_path.exists():
-    for test in json.loads(manifest_path.read_text()):
-        for attachment in test.get('attachments', []):
-            filename = attachment.get('exportedFileName', '')
-            if not filename.endswith('.png') or Path(filename).name != filename:
-                continue
-            screenshot = attachment_dir / filename
-            if not screenshot.is_file() or screenshot.read_bytes()[:8] != b'\x89PNG\r\n\x1a\n':
-                continue
-            if attachment.get('isAssociatedWithFailure'):
-                continue
-            ui_screenshots.append({
-                'testIdentifier': test['testIdentifier'],
-                'name': attachment.get('suggestedHumanReadableName', ''),
-                'exportedFileName': filename,
-                'deviceName': attachment.get('deviceName'),
-            })
-if os.environ.get('GITHUB_ACTIONS') == 'true':
-    assert simulator and simulator['runtimeVersion'] == '27.0', simulator
-    assert simulator['testStatus'] == 'passed', simulator
-    assert simulator['nativeLaunchValidation'] == 'Passed: 2 XCUITest flows', simulator
-    assert test_summary and test_summary.get('result') == 'Passed', test_summary
-    assert test_summary.get('passedTests') == 26 and test_summary.get('totalTestCount') == 26, test_summary
-    assert test_summary.get('failedTests') == 0 and test_summary.get('skippedTests') == 0, test_summary
-    tested_devices = test_summary.get('devicesAndConfigurations', [])
-    assert tested_devices and all(item['device']['osVersion'] == '27.0'
-                                  for item in tested_devices), tested_devices
-    required_flows = {
-        'ConstellationUITests/testAllThreeThemesRemainSelectable()',
-        'ConstellationUITests/testAstralDefaultConstellationAndSceneEditing()',
-    }
-    assert required_flows <= {item['testIdentifier'] for item in ui_screenshots}, ui_screenshots
-    for name in ('01-Astral-onboarding', '03-Expanded-constellation', '04-Scene-script',
-                 '05-Edited-scene-script'):
-        assert any(item['name'].startswith(name + '_') for item in ui_screenshots), name
-Path('build/validation-evidence.json').write_text(json.dumps({
-    'simulatorValidation': simulator,
-    'testResults': test_summary,
-    'nativeUIScreenshots': ui_screenshots,
-}, indent=2) + '\n')
-print(f'Native test evidence checked: {len(ui_screenshots)} retained screenshots.')
-PY
 developer_dir="$(python3 Tools/select_xcode.py --print-path)"
 export DEVELOPER_DIR="$developer_dir"
 plutil -lint Invoke.xcodeproj/project.pbxproj
@@ -152,6 +100,7 @@ metadata = {
                   'version': toolchain['sdks']['iphoneos']['version']},
     'simulatorValidation': simulator,
     'testResults': test_summary,
+    'authoredTests': validation['authoredTests'],
     'nativeUIScreenshots': ui_screenshots,
     'workflowRun': os.environ.get('GITHUB_RUN_ID'),
     'deviceValidation': 'Not performed by CI; test on the intended iPhone and LiveContainer version.',

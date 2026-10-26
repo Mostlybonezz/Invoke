@@ -62,7 +62,7 @@ def build_source(ipa, repository, tag, date, entitlements=None):
         "version": info["CFBundleShortVersionString"],
         "buildVersion": info["CFBundleVersion"],
         "date": date,
-        "localizedDescription": "Invoke iPhone release for LiveContainer or a compatible sideloading tool.",
+        "localizedDescription": "Invoke 2.0 — The Living Grimoire, with practical quests, configurable schedules, linked intentions and honest action history.",
         "downloadURL": download_url,
         "size": size,
         "minOSVersion": info["MinimumOSVersion"],
@@ -71,15 +71,17 @@ def build_source(ipa, repository, tag, date, entitlements=None):
         "name": info.get("CFBundleDisplayName", "Invoke"),
         "bundleIdentifier": info["CFBundleIdentifier"],
         "developerName": repository.split("/", 1)[0],
-        "subtitle": "A personal sanctuary for your next chapter",
+        "subtitle": "A living grimoire for everyday life",
         "localizedDescription": (
-            "Organize stories, beliefs, manifestations, rituals, scenes, and physical relics. "
-            "Three native themes, local storage, and portable backups. Requires iOS 17 or later. "
+            "Plan quests and rituals, shape Invocations, browse the Life Maintenance Codex, "
+            "care for assets, and reflect in Chronicle. Existing stories, scene constellations, "
+            "beliefs and relics remain available. Native themes, private local storage, optional "
+            "reminders and portable backups. Requires iOS 17 or later; built with the iOS 27 SDK. "
             "This IPA requires LiveContainer or re-signing with a compatible sideloading tool; "
             "Safari cannot install it directly."
         ),
         "iconURL": icon_url,
-        "tintColor": "#6C2938",
+        "tintColor": "#D85B27",
         "category": "lifestyle",
         "versions": [version],
         "appPermissions": {"entitlements": permission_names, "privacy": privacy},
@@ -98,7 +100,7 @@ def build_source(ipa, repository, tag, date, entitlements=None):
         "description": "Official Invoke builds published from this repository's GitHub Actions workflow.",
         "website": root_url,
         "iconURL": icon_url,
-        "tintColor": "#6C2938",
+        "tintColor": "#D85B27",
         "apps": [app],
         "news": [],
     }
