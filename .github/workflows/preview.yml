@@ -1,0 +1,225 @@
+name: Publish requested Invoke 2.0 preview
+
+on:
+  push:
+    branches: [invoke-2.0-living-grimoire]
+    paths: [.github/workflows/preview.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: invoke-v2-preview
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      SOURCE_COMMIT: 0c7b701eb90f1d032e6693c638521fb591250174
+      EVIDENCE_RUN: '40406587243'
+      RELEASE_TAG: v2.0.0
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 0c7b701eb90f1d032e6693c638521fb591250174
+          persist-credentials: false
+      - name: Verify frozen source and exact Apple toolchain
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'The preview release already exists; refusing to replace it.' >&2
+            exit 1
+          fi
+          python3 Tools/select_xcode.py
+          python3 Tools/check_source.py
+          mkdir -p build/release
+          export DEVELOPER_DIR="$(python3 Tools/select_xcode.py --print-path)"
+          xcodebuild -downloadComponent MetalToolchain 2>&1 | tee build/metal-toolchain-install.log
+          xcrun --sdk iphoneos27.0 metal -v 2>&1 | tee build/metal-version.txt
+      - name: Build and verify the preview device IPA
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR="$(python3 Tools/select_xcode.py --print-path)"
+          plutil -lint Invoke.xcodeproj/project.pbxproj
+          xcodebuild -version | tee build/xcode-version.txt
+          xcodebuild build -project Invoke.xcodeproj -scheme Invoke -configuration Release \
+            -sdk iphoneos27.0 -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DeviceDerivedData ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            IPHONEOS_DEPLOYMENT_TARGET=17.0 MARKETING_VERSION=2.0.0 CURRENT_PROJECT_VERSION=20000 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+            2>&1 | tee build/device-build.log
+          app="$PWD/build/DeviceDerivedData/Build/Products/Release-iphoneos/Invoke.app"
+          test -f "$app/Info.plist"
+          executable="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")"
+          xcrun lipo "$app/$executable" -verify_arch arm64
+          test -f "$app/default.metallib"
+          if [[ -d "$app/Frameworks" ]]; then
+            while IFS= read -r -d '' item; do
+              codesign --force --sign - --timestamp=none "$item"
+            done < <(find "$app/Frameworks" -depth \( -name '*.framework' -o -name '*.dylib' \) -print0)
+          fi
+          codesign --force --sign - --timestamp=none "$app"
+          codesign --verify --deep --strict "$app"
+          package_dir="$(mktemp -d "${TMPDIR:-/tmp}/invoke-preview.XXXXXX")"
+          trap 'rm -rf "$package_dir"' EXIT
+          mkdir "$package_dir/Payload"
+          ditto "$app" "$package_dir/Payload/Invoke.app"
+          ditto -c -k --norsrc --keepParent "$package_dir/Payload" "$PWD/build/release/Invoke.ipa"
+          cp Invoke/Assets.xcassets/AppIcon.appiconset/Invoke.png build/release/icon.png
+      - name: Retrieve actual existing test evidence without rerunning tests
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, time, urllib.parse, urllib.request, zipfile
+          from pathlib import Path
+          root = 'https://api.github.com/repos/' + os.environ['GH_REPO']
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'}
+          class SafeRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+                  redirected = super().redirect_request(req, fp, code, msg, hdrs, newurl)
+                  if redirected and urllib.parse.urlparse(req.full_url).netloc != urllib.parse.urlparse(newurl).netloc:
+                      redirected.remove_header('Authorization')
+                  return redirected
+          opener = urllib.request.build_opener(SafeRedirect())
+          def request(url):
+              return opener.open(urllib.request.Request(url, headers=headers), timeout=60)
+          with request(root + '/actions/runs/' + os.environ['EVIDENCE_RUN']) as response:
+              run = json.load(response)
+          assert run['id'] == 40406587243
+          assert run['head_sha'] == '9d45260e5db989b64c77d1f82787f98553c3d77f'
+          assert run['repository']['full_name'].lower() == 'mostlybonezz/invoke'
+          deadline = time.monotonic() + 600
+          while True:
+              with request(root + '/actions/runs/' + os.environ['EVIDENCE_RUN'] + '/artifacts') as response:
+                  artifacts = json.load(response)['artifacts']
+              artifact = next((a for a in artifacts if a['name'] == 'Invoke-build-diagnostics' and not a['expired']), None)
+              if artifact:
+                  break
+              if time.monotonic() >= deadline:
+                  raise SystemExit('The existing native test evidence is not available yet. No release published.')
+              print('Waiting for the existing verification run to upload its evidence.', flush=True)
+              time.sleep(15)
+          archive = Path('build/existing-diagnostics.zip')
+          with request(artifact['archive_download_url']) as response, archive.open('wb') as output:
+              while chunk := response.read(1024 * 1024):
+                  output.write(chunk)
+          evidence = Path('build/existing-evidence'); evidence.mkdir()
+          required = {'tests.log', 'test-summary.json', 'simulator-info.json'}
+          with zipfile.ZipFile(archive) as source:
+              for name in required:
+                  matches = [item for item in source.namelist() if Path(item).name == name]
+                  if len(matches) != 1:
+                      raise SystemExit('Missing or ambiguous existing evidence: ' + name)
+                  (evidence / name).write_bytes(source.read(matches[0]))
+          PY
+      - name: Record honest preview validation and checksum
+        run: |
+          python3 - <<'PY'
+          import datetime, hashlib, json, os, plistlib, re, sys, zipfile
+          from pathlib import Path
+          sys.path.insert(0, 'Tools')
+          from verify_test_evidence import expected_tests
+          output = Path('build/release'); evidence = Path('build/existing-evidence')
+          authored = expected_tests(Path('.'))
+          log = (evidence / 'tests.log').read_text(errors='replace')
+          observed = set()
+          for item in re.findall(r"Test Case '-\[InvokeTests\.([^\]]+)\]' passed", log):
+              owner, method = item.split(' ', 1)
+              observed.add(owner + '/' + method + '()')
+          assert len(authored['unit']) == 130 and observed == set(authored['unit']), 'All 130 unit tests must have passed in the existing run.'
+          assert re.search(r"Test Suite 'InvokeTests\.xctest' passed.*?Executed 130 tests, with 0 failures", log, re.S), 'Unit suite did not pass cleanly.'
+          summary = json.loads((evidence / 'test-summary.json').read_text())
+          simulator = json.loads((evidence / 'simulator-info.json').read_text())
+          assert simulator['runtimeVersion'] == '27.0'
+          assert summary['devicesAndConfigurations'] and all(x['device']['osVersion'] == '27.0' for x in summary['devicesAndConfigurations'])
+          ipa = output / 'Invoke.ipa'
+          with zipfile.ZipFile(ipa) as archive:
+              names = archive.namelist()
+              info = plistlib.loads(archive.read('Payload/Invoke.app/Info.plist'))
+              assert info['CFBundleIdentifier'] == 'app.invoke.personal'
+              assert info['CFBundlePackageType'] == 'APPL'
+              assert info['CFBundleShortVersionString'] == '2.0.0'
+              assert info['MinimumOSVersion'] == '17.0'
+              assert info['DTSDKName'] == 'iphoneos27.0'
+              assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS']
+              assert 'Payload/Invoke.app/' + info['CFBundleExecutable'] in names
+              assert 'Payload/Invoke.app/default.metallib' in names
+              assert all(name.startswith('Payload/') for name in names)
+              assert not any(name.endswith('embedded.mobileprovision') for name in names)
+          digest = hashlib.sha256(ipa.read_bytes()).hexdigest()
+          (output / 'Invoke.ipa.sha256').write_text(digest + '  Invoke.ipa\n')
+          link = 'https://github.com/' + os.environ['GH_REPO'] + '/actions/runs/' + os.environ['EVIDENCE_RUN']
+          ui_passed = summary['passedTests'] - 130
+          status = 'Preview requested by the owner before full UI acceptance. This is not a fully validated release.'
+          metadata = {
+              'app': 'Invoke', 'channel': 'preview', 'version': info['CFBundleShortVersionString'],
+              'buildNumber': info['CFBundleVersion'], 'bundleIdentifier': info['CFBundleIdentifier'],
+              'sourceCommit': os.environ['SOURCE_COMMIT'], 'minimumOSVersion': info['MinimumOSVersion'],
+              'architecture': 'arm64', 'deviceSDK': info['DTSDKName'],
+              'signature': 'local ad-hoc; no Apple provisioning profile',
+              'sha256': digest, 'bytes': ipa.stat().st_size,
+              'builtAtUTC': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'xcode': Path('build/xcode-version.txt').read_text().strip(),
+              'toolchain': json.loads(Path('build/toolchain.json').read_text()),
+              'validationStatus': status, 'unitTestsPassed': 130, 'uiTestsPassed': ui_passed,
+              'testResults': summary, 'testEvidenceURL': link, 'simulatorValidation': simulator,
+              'workflowRun': os.environ['GITHUB_RUN_ID'],
+              'deviceValidation': 'Physical iPhone and LiveContainer 3.8.10 testing not performed.',
+          }
+          (output / 'build-info.json').write_text(json.dumps(metadata, indent=2) + '\n')
+          (output / 'test-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          notes = f'''# Invoke 2.0 Preview
+
+          Download **Invoke.ipa** below and import it in LiveContainer. This preview is published at the owner's request so the app can be downloaded now while remaining fixes are deferred.
+
+          Built for arm64 with Xcode 27.0 and the iOS 27.0 SDK. IPA structure, Metal library, and ad-hoc signature checks passed. The bundle identity remains `app.invoke.personal` to preserve the existing app's data container.
+
+          **Testing is incomplete:** all 130 native unit tests passed on iOS 27.0. The existing run reports {ui_passed} UI tests passed, {summary['failedTests']} failed, and {summary['skippedTests']} skipped. A known automated Spell editor flow failed when selecting its method field. This preview does not claim that every screen or device flow has passed. [Actual verification run]({link}). Full details are attached in `test-summary.json` and `build-info.json`.
+
+          Export an Invoke backup before updating, replace the existing app in the same LiveContainer container, and keep that container. Do not delete the old app's data. Physical iPhone/LiveContainer 3.8.10 behavior has not been tested here. The IPA uses an ad-hoc signature; Safari downloads it but cannot install it directly.
+
+          The strict normal release workflow is unchanged. This is a GitHub prerelease, and remaining fixes can follow in another version.
+          '''
+          Path('build/preview-notes.md').write_text('\n'.join(line.strip() for line in notes.splitlines()) + '\n')
+          PY
+          python3 Tools/generate_feed.py --ipa build/release/Invoke.ipa --repository "$GH_REPO" --tag "$RELEASE_TAG" --output build/release/source.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('build/release/source.json'); data = json.loads(path.read_text())
+          data['name'] = 'Invoke Preview'
+          data['description'] = 'Owner-requested preview. Full UI validation and physical device checks remain incomplete.'
+          for app in data['apps']:
+              app['subtitle'] = 'Invoke 2.0 preview'
+              description = 'Preview: 130 unit tests passed; full UI and physical device validation remain incomplete. Read the GitHub prerelease notes.'
+              app['versionDescription'] = description
+              app['versions'][0]['localizedDescription'] = description
+          path.write_text(json.dumps(data, indent=2) + '\n')
+          PY
+      - name: Publish the requested downloadable prerelease
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" build/release/Invoke.ipa build/release/Invoke.ipa.sha256 \
+            build/release/build-info.json build/release/test-summary.json build/release/source.json build/release/icon.png \
+            --target "$SOURCE_COMMIT" --title 'Invoke 2.0 Preview' --notes-file build/preview-notes.md --prerelease --latest=false
+          echo "Download preview: https://github.com/$GH_REPO/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep preview build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Invoke-preview-build
+          path: |
+            build/*.log
+            build/*version.txt
+            build/toolchain.json
+            build/release
+            build/existing-evidence
+          if-no-files-found: ignore
+          retention-days: 14
