@@ -1,0 +1,43 @@
+name: Inspect synthetic recovery screenshots
+on:
+  push:
+    branches: [invoke-2.0.1-release]
+    paths: [.github/workflows/recovery-inspect.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download synthetic simulator evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: Invoke-build-diagnostics
+          path: evidence
+          github-token: ${{ github.token }}
+          run-id: 40416355839
+      - name: Collect only recovery test screenshots
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, zipfile
+          root = pathlib.Path('evidence')
+          manifests = list(root.rglob('ui-screenshots/manifest.json'))
+          assert len(manifests) == 1, manifests
+          folder = manifests[0].parent
+          manifest = json.loads(manifests[0].read_text())
+          chosen = [t for t in manifest if 'StorageRecoveryUITests/' in t.get('testIdentifier', '')]
+          assert chosen, 'No recovery test screenshot entries'
+          with zipfile.ZipFile('invoke-recovery-review.zip', 'w', zipfile.ZIP_DEFLATED) as out:
+              out.writestr('manifest.json', json.dumps(chosen, indent=2))
+              for test in chosen:
+                  for item in test.get('attachments', []):
+                      name = item.get('exportedFileName', '')
+                      if name.endswith('.png') and pathlib.Path(name).name == name and (folder / name).is_file():
+                          out.write(folder / name, name)
+          PY
+      - name: Attach synthetic review evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload v2.0.0 invoke-recovery-review.zip
