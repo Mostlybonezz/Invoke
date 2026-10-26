@@ -247,7 +247,7 @@ struct OccurrenceDetailView: View {
         }
     }
     private func restoreProgress() {
-        let records = store.activeActions(for: current.id).sorted { $0.recordedAt < $1.recordedAt }
+        let records = store.activeActions(for: current.id)
         if sessionID == nil, let began = records.last(where: { $0.kind == .begin }), !records.contains(where: { $0.sessionID == began.sessionID && $0.kind == .complete }) { sessionID = began.sessionID }
         if let record = records.last(where: { $0.sessionID == sessionID && [.progress, .smaller].contains($0.kind) }) { checked = Set(record.completedStepIDs); notes = record.notes; measurement = record.measurement; measurementUnit = record.measurementUnit }
     }

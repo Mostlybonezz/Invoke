@@ -66,10 +66,17 @@ final class GrimoireStoreTests: XCTestCase {
     @MainActor func testStepProgressDoesNotCreditFullRoutine() throws {
         let s = store(); var p = practice(); p.steps = [PracticeStep(title: "First"), PracticeStep(title: "Second")]
         let row = try occurrence(s, practice: p), session = try s.beginSession(occurrenceID: row.id, now: date())
+        // Deliberately use identical timestamps: the most recently saved progress,
+        // including an unchecked step, must survive reopen and portable restore.
+        _ = try s.recordAction(occurrenceID: row.id, kind: .progress, sessionID: session, requestID: UUID(), steps: [p.steps[1].id], occurredAt: date(), now: date())
+        _ = try s.recordAction(occurrenceID: row.id, kind: .progress, sessionID: session, requestID: UUID(), steps: [], occurredAt: date(), now: date())
         _ = try s.recordAction(occurrenceID: row.id, kind: .progress, sessionID: session, requestID: UUID(), steps: [p.steps[0].id], occurredAt: date(), now: date())
         let reopened = AppStore(directory: s.directory)
         XCTAssertEqual(try reopened.beginSession(occurrenceID: row.id, now: date()), session)
         XCTAssertEqual(reopened.activeActions(for: row.id).last?.completedStepIDs, [p.steps[0].id])
+        let restored = store()
+        try restored.restore(reopened.makeBackup().payload)
+        XCTAssertEqual(restored.activeActions(for: row.id).last?.completedStepIDs, [p.steps[0].id])
         XCTAssertThrowsError(try reopened.recordAction(occurrenceID: row.id, kind: .complete, sessionID: session, requestID: UUID(), steps: [p.steps[0].id], occurredAt: date(), now: date()))
         _ = try reopened.recordAction(occurrenceID: row.id, kind: .smaller, sessionID: session, requestID: UUID(), steps: [p.steps[0].id], occurredAt: date(), now: date())
         XCTAssertEqual(reopened.occurrenceStatus(row), .partial); XCTAssertEqual(reopened.sessionCount(for: row), 0)

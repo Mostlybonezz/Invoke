@@ -180,11 +180,13 @@ final class SQLiteHistoryRepository {
     func occurrence(id: String) throws -> PracticeOccurrence? { try records(PracticeOccurrence.self, "SELECT payload FROM occurrences WHERE id=?", [.text(id)]).first }
     func revision(id: UUID) throws -> GrimoireRevision? { try records(GrimoireRevision.self, "SELECT payload FROM revisions WHERE id=?", [.text(id.uuidString)]).first }
     func isCorrected(_ id: UUID) throws -> Bool { try scalar("SELECT EXISTS(SELECT 1 FROM actions WHERE reverses_id=?)", [.text(id.uuidString)]) != 0 }
+    // For equal recording times, SQLite insertion order preserves the latest saved
+    // session snapshot; UUID ordering is unrelated to the order of user actions.
     func activeActions(for occurrenceID: String) throws -> [ActionRecord] {
-        try records(ActionRecord.self, "SELECT a.payload FROM actions a WHERE a.occurrence_id=? AND a.kind<>'correction' AND NOT EXISTS(SELECT 1 FROM actions c WHERE c.reverses_id=a.id) ORDER BY a.recorded,a.id", [.text(occurrenceID)])
+        try records(ActionRecord.self, "SELECT a.payload FROM actions a WHERE a.occurrence_id=? AND a.kind<>'correction' AND NOT EXISTS(SELECT 1 FROM actions c WHERE c.reverses_id=a.id) ORDER BY a.recorded,a.rowid", [.text(occurrenceID)])
     }
     func allActions(for occurrenceID: String) throws -> [ActionRecord] {
-        try records(ActionRecord.self, "SELECT payload FROM actions WHERE occurrence_id=? ORDER BY recorded,id", [.text(occurrenceID)])
+        try records(ActionRecord.self, "SELECT payload FROM actions WHERE occurrence_id=? ORDER BY recorded,rowid", [.text(occurrenceID)])
     }
     func latestCompletion(for practiceID: UUID) throws -> ActionRecord? {
         try records(ActionRecord.self, "SELECT a.payload FROM actions a WHERE a.practice_id=? AND a.kind='complete' AND NOT EXISTS(SELECT 1 FROM actions c WHERE c.reverses_id=a.id) ORDER BY a.occurred DESC,a.recorded DESC,a.id DESC LIMIT 1", [.text(practiceID.uuidString)]).first
@@ -352,7 +354,7 @@ final class SQLiteHistoryRepository {
     func fullData(core: AppData? = nil) throws -> AppData {
         var value = try core ?? loadCore()
         value.grimoire.occurrences = try records(PracticeOccurrence.self, "SELECT payload FROM occurrences ORDER BY id")
-        value.grimoire.actions = try records(ActionRecord.self, "SELECT payload FROM actions ORDER BY recorded,id")
+        value.grimoire.actions = try records(ActionRecord.self, "SELECT payload FROM actions ORDER BY recorded,rowid")
         value.grimoire.revisions = try records(GrimoireRevision.self, "SELECT payload FROM revisions ORDER BY changed,id")
         return value
     }

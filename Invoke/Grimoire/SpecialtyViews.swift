@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SpellEditorView: View {
     @EnvironmentObject private var store: AppStore
@@ -33,7 +34,15 @@ struct SpellEditorView: View {
             recordDates(created: draft.createdAt, updated: draft.updatedAt)
         }
         .navigationTitle(draft.archived ? "Archived method" : "Spell & method")
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(draft.archived || draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("spell-save") } }
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(draft.archived || draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("spell-save") }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
+                    .accessibilityIdentifier("grimoire-keyboard-done")
+            }
+        }
         .invokeScreen()
     }
     private func save() {
@@ -413,7 +422,15 @@ struct EchoEditorView: View {
             recordDates(created: draft.createdAt, updated: draft.updatedAt)
         }
         .navigationTitle(draft.archived ? "Archived Echo" : "Echo")
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(draft.archived || draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("echo-save") } }
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(draft.archived || draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("echo-save") }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
+                    .accessibilityIdentifier("grimoire-keyboard-done")
+            }
+        }
         .invokeScreen()
     }
     private func save() {

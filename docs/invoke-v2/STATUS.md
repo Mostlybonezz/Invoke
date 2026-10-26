@@ -1,5 +1,15 @@
 # Invoke 2.0 implementation status
 
+## Current release checkpoint — 26 October 2026
+
+Invoke 2.0 Preview is published at https://github.com/Mostlybonezz/Invoke/releases/tag/v2.0.0 and is the latest release for the existing LiveContainer source. It was built from `0c7b701eb90f1d032e6693c638521fb591250174` with Xcode 27 and the iOS 27 SDK. Native run https://github.com/Mostlybonezz/Invoke/actions/runs/40406587243 passed 130 unit tests and seven UI tests; two UI tests failed (saved-method editing and corrupt-storage backup review). The generated source contains the real IPA version and preserves `app.invoke.personal`.
+
+The follow-up source at `97b8b6965246c8b7334cf9a30e8beb7258ae36d9` gives editable fields unique identifiers, presents the recovery review from a validated backup item, and includes date/history presentation refinements. It is being verified in https://github.com/Mostlybonezz/Invoke/actions/runs/40416355839 for a possible v2.0.1 release. Do not claim the follow-up passed until that run has completed successfully.
+
+The owner reports that the v2.0.0 preview installed and opened in their iOS 27 / LiveContainer 3.8.10 environment and that their existing data appeared. Exact device model and detailed record counts were not supplied; file-provider, reminder, recovery and broader host checks remain unverified. Full manual accessibility, screen-layout, visual and device-performance review also remains open. Export a backup outside the host and preserve the existing Invoke data container before updating.
+
+## Earlier development checkpoint
+
 Baseline: `718c5f35ff15ca33542de7b5e844f57bc95dce96`. Branch: `invoke-2.0-living-grimoire`.
 
 Implemented: five main areas; complete 254-source Codex; all recurrence families; real sessions, partial scope, correction and undo; specialty/Bonds/Arcana/assets/Invocations; original collection access; settings/setup/recovery; local reminder planning; migration and portable merge/replace. SQLite core/history transactions and paged Chronicle have replaced eager action-history loading in the local working source.

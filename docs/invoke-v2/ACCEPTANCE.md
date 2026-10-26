@@ -1,5 +1,7 @@
 # Invoke 2.0 acceptance record
 
+> **Later evidence:** [native run 40406587243](https://github.com/Mostlybonezz/Invoke/actions/runs/40406587243) on the iOS 27 simulator passed all 130 unit tests and seven UI tests; two UI tests failed. The current v2.0.0 preview was published with those limitations. A follow-up release run is in progress. The matrix below is the earlier checkpoint and its “pending” labels have not yet been reconciled case by case with that run. The owner reports that the preview installed and opened in LiveContainer on iOS 27 with existing data visible; detailed host checks remain open.
+
 Checkpoint: 26 October 2026, before final native release verification. This maps all 34 cases in the approved master brief to implemented source and authored tests. A test listed below is evidence of coverage intent, not evidence that it passed. The release owner must append the actual tested commit, CI run, results and inspected screenshots before publication.
 
 ## Checks actually performed at this checkpoint

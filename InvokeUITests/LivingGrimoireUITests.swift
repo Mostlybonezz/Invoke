@@ -27,6 +27,10 @@ final class LivingGrimoireUITests: XCTestCase {
     private func tap(_ target: XCUIElement, upwards: Bool = true) {
         reveal(target, upwards: upwards); target.tap()
     }
+    private func dismissGrimoireKeyboard() {
+        let done = element("grimoire-keyboard-done")
+        if done.waitForExistence(timeout: 3) && done.isHittable { done.tap() }
+    }
     private func screenshot(_ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
@@ -126,8 +130,8 @@ final class LivingGrimoireUITests: XCTestCase {
         tap(app.tabBars.buttons["Grimoire"])
         tap(app.buttons["Add to Grimoire"])
         tap(app.buttons["Spell or saved method"])
-        tap(element("spell-title")); element("spell-title").typeText(spellTitle)
-        tap(element("spell-method")); element("spell-method").typeText("Pause, notice, and choose the next action.")
+        tap(element("spell-title")); element("spell-title").typeText(spellTitle); dismissGrimoireKeyboard()
+        tap(element("spell-method")); element("spell-method").typeText("Pause, notice, and choose the next action."); dismissGrimoireKeyboard()
         tap(element("spell-save"), upwards: false)
         tap(element("grimoire-shelf"), upwards: false)
         tap(app.buttons["Spells & methods"])
@@ -137,9 +141,9 @@ final class LivingGrimoireUITests: XCTestCase {
         back()
         tap(app.buttons["Add to Grimoire"])
         tap(app.buttons["Echo or comparison"])
-        tap(element("echo-title")); element("echo-title").typeText(echoTitle)
-        tap(element("echo-source-a")); element("echo-source-a").typeText("A personal notebook")
-        tap(element("echo-source-b")); element("echo-source-b").typeText("A conversation remembered")
+        tap(element("echo-title")); element("echo-title").typeText(echoTitle); dismissGrimoireKeyboard()
+        tap(element("echo-source-a")); element("echo-source-a").typeText("A personal notebook"); dismissGrimoireKeyboard()
+        tap(element("echo-source-b")); element("echo-source-b").typeText("A conversation remembered"); dismissGrimoireKeyboard()
         tap(element("echo-save"), upwards: false)
 
         relaunch()

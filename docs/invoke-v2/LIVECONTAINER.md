@@ -31,7 +31,7 @@ If notification authorization or file import/export fails only inside LiveContai
 
 ## Device acceptance record
 
-Status: **not yet performed on physical hardware from this Windows workspace**.
+Status: The owner reports that Invoke 2.0 Preview installed and opened on their iOS 27 / LiveContainer 3.8.10 iPhone and that existing data appeared. Exact device model and detailed counts were not supplied; the remaining checks below have not been observed from this Windows workspace.
 
 Record device model, exact iOS version, LiveContainer version/build, signing mode, and relevant guest settings with the following checks:
 
