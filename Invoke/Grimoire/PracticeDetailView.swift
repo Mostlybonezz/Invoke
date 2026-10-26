@@ -5,10 +5,11 @@ struct PracticeDetailView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.invokeTheme) private var theme
     @State private var editing = false
+    @State private var duplicate: PracticeDefinition?
     private var practice: PracticeDefinition? { store.data.grimoire.practices.first { $0.id == practiceID } }
     private var occurrences: [PracticeOccurrence] {
         let now = Date(), calendar = GrimoirePresentation.calendar(store.data.grimoire.settings)
-        return Array(store.grimoireOccurrences(in: DateInterval(start: calendar.startOfDay(for: now), end: calendar.date(byAdding: .year, value: 1, to: now)!)).filter { $0.practiceID == practiceID }.prefix(12))
+        return Array(store.grimoireOccurrences(in: DateInterval(start: calendar.startOfDay(for: now), end: calendar.date(byAdding: .year, value: 1, to: now)!), practiceID: practiceID).prefix(12))
     }
     var body: some View {
         ScrollView {
@@ -39,6 +40,14 @@ struct PracticeDetailView: View {
                     }
                     SectionEyebrow(text: "Practice controls")
                     Button("Edit future practice") { editing = true }.buttonStyle(.bordered)
+                    Button("Make a customized copy") {
+                        var copy = practice
+                        copy.id = UUID(); copy.title += " · copy"; copy.version = 1; copy.revisions = []; copy.pauses = []
+                        copy.createdAt = Date(); copy.updatedAt = Date(); copy.effectiveFrom = Date(); copy.archived = false; copy.paused = false
+                        copy.steps = copy.steps.map { var step = $0; step.id = UUID(); return step }
+                        copy.schedule.lastActualCompletion = nil
+                        duplicate = copy
+                    }
                     Button(practice.paused ? "Resume practice" : "Pause practice") { store.presentGrimoireError { try store.setPracticePaused(practiceID, paused: !practice.paused) } }
                     Button(practice.archived ? "Restore from archive" : "Archive practice") { store.presentGrimoireError { try store.archivePractice(practiceID, archived: !practice.archived) } }
                     NavigationLink("View its recorded history") { ChronicleView(practiceID: practiceID) }
@@ -58,6 +67,7 @@ struct PracticeDetailView: View {
             }.padding(20)
         }.navigationTitle("Practice").navigationBarTitleDisplayMode(.inline).invokeScreen()
             .sheet(isPresented: $editing) { if let practice { NavigationStack { PracticeEditorView(draft: practice) } } }
+            .sheet(item: $duplicate) { draft in NavigationStack { PracticeEditorView(draft: draft) } }
     }
 }
 
@@ -109,7 +119,7 @@ struct OccurrenceDetailView: View {
     @State private var rescheduling = false
     @State private var rescheduleDate = Date()
     @State private var showingTimer = false
-    private var current: PracticeOccurrence { store.data.grimoire.occurrences.first { $0.id == occurrence.id } ?? occurrence }
+    private var current: PracticeOccurrence { store.occurrence(id: occurrence.id) ?? occurrence }
     private var practice: PracticeDefinition? { store.data.grimoire.practices.first { $0.id == occurrence.practiceID } }
     private var status: OccurrenceStatus { store.occurrenceStatus(current) }
     private var latest: ActionRecord? { store.activeActions(for: current.id).filter { ![.begin, .progress].contains($0.kind) }.max { $0.recordedAt < $1.recordedAt } }

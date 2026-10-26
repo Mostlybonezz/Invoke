@@ -24,8 +24,17 @@ extension Color {
     init(hex: UInt32) { self.init(.sRGB, red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255, opacity: 1) }
 }
 private struct ThemeKey: EnvironmentKey { static let defaultValue = InvokeTheme.astral }
+private struct MotionDisabledKey: EnvironmentKey { static let defaultValue = false }
 extension EnvironmentValues {
     var invokeTheme: InvokeTheme { get { self[ThemeKey.self] } set { self[ThemeKey.self] = newValue } }
+    var invokeMotionDisabled: Bool { get { self[MotionDisabledKey.self] } set { self[MotionDisabledKey.self] = newValue } }
+}
+
+/// Either the system accessibility preference or Invoke's preference can reduce motion.
+@propertyWrapper struct InvokeReducedMotion: DynamicProperty {
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.invokeMotionDisabled) private var appMotionDisabled
+    var wrappedValue: Bool { systemReduceMotion || appMotionDisabled }
 }
 
 enum InvokeLayout {
@@ -113,7 +122,7 @@ struct InvokePrimaryButton: View {
 }
 
 struct InvokePressStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @InvokeReducedMotion private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.opacity(configuration.isPressed ? 0.78 : 1)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
@@ -235,7 +244,7 @@ private struct InvokeGlassControlModifier<S: Shape>: ViewModifier {
     @EnvironmentObject private var store: AppStore
     @Environment(\.invokeTheme) private var theme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @InvokeReducedMotion private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
     @ViewBuilder func body(content: Content) -> some View {

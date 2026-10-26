@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var removeExamples = false
     @State private var exportMessage = ""
     @State private var exportAfterReview = false
+    @State private var mergePreviewText = ""
     var body: some View {
         Form {
             Section {
@@ -25,6 +26,7 @@ struct SettingsView: View {
             }
             Section("Your writing, on this iPhone") {
                 Label(store.saveState, systemImage: "internaldrive")
+                if !store.storageRecoveryRequired { Text("\(store.historyCounts.actions) action records · \(store.historyCounts.revisions) recorded revisions").font(.footnote).foregroundStyle(theme.secondary) }
                 Text("Invoke works offline. It does not use an account, analytics, an AI service, or cloud synchronization. Writing and imported photographs are stored in the app’s protected local storage.")
                 Text("Deleting Invoke can delete its local data. Export a complete backup regularly to a location you choose in Files. Device backups depend on your iPhone settings.").font(.footnote).foregroundStyle(theme.secondary)
                 Button { exportBackup() } label: { Label("Export complete backup", systemImage: "square.and.arrow.up") }
@@ -34,6 +36,14 @@ struct SettingsView: View {
                     ShareLink(item: url) { Label("Save retained recovery copy", systemImage: "arrow.uturn.backward") }
                     Button("Review retained recovery copy") { validateImport(url) }.accessibilityIdentifier("recovery-review-copy")
                 }
+                if store.recoveryBackupURLs.count > 1 {
+                    DisclosureGroup("Other retained recovery copies") {
+                        ForEach(store.recoveryBackupURLs.dropFirst(), id: \.self) { url in
+                            Button("Review \(url.lastPathComponent)") { validateImport(url) }
+                        }
+                    }
+                }
+                Button("Find retained recovery copies") { store.presentGrimoireError { try store.refreshRecoveryBackups() } }
                 Button("Retry saving now") { store.flush() }
             }
             Section("Example collection") {
@@ -72,11 +82,11 @@ struct SettingsView: View {
                             Text("\(payload.data.stories.count) stories · \(payload.data.entries.count) Grimoire entries · \(payload.data.relics.count) relics · \(payload.images.count) images")
                             Text("\(payload.data.grimoire.practices.count) practices · \(payload.data.grimoire.actions.count) action records · \(payload.data.grimoire.invocations.count) Invocations · \(payload.data.grimoire.assets.count) assets")
                             Text("\(payload.data.grimoire.spells.count) Spells · \(payload.data.grimoire.enchantments.count) Enchantments · \(payload.data.grimoire.arcana.count) Arcana records · \(payload.data.grimoire.echoes.count) Echoes · \(payload.data.grimoire.revisions.count) revisions")
-                            Text(mergeSummary(payload)).font(.footnote).foregroundStyle(theme.secondary)
+                            Text(mergePreviewText).font(.footnote).foregroundStyle(theme.secondary)
                             Button("Merge new records into my collection") {
                                 do { try store.mergeBackup(payload); reviewRestore = false; proposedRestore = nil; exportMessage = "Merged new records. Existing records and preferences were kept." }
                                 catch { store.errorMessage = error.localizedDescription }
-                            }.buttonStyle(.bordered).frame(minHeight: 44)
+                            }.buttonStyle(.bordered).frame(minHeight: 44).disabled(store.storageRecoveryRequired)
                         }
                         Text("Merge adds records with new identities and keeps your current records on every identity conflict. Current preferences are kept. Replace instead restores the complete backup, including all records, history, photos, and preferences.")
                         Text("Export your current collection first. Invoke also creates a local recovery copy before replacing anything.").foregroundStyle(theme.secondary)
@@ -103,12 +113,13 @@ struct SettingsView: View {
         do { backup = try store.makeBackup(); exporting = true }
         catch { store.errorMessage = error.localizedDescription }
     }
-    private func mergeSummary(_ payload: BackupPayload) -> String {
+    private func mergeSummary(_ payload: BackupPayload) throws -> String {
         func overlap<T: Identifiable>(_ current: [T], _ incoming: [T]) -> Int where T.ID: Hashable { Set(current.map(\.id)).intersection(Set(incoming.map(\.id))).count }
         let a = store.data, b = payload.data
         var counts = [overlap(a.stories, b.stories), overlap(a.chapters, b.chapters), overlap(a.scenes, b.scenes), overlap(a.entries, b.entries), overlap(a.relics, b.relics), overlap(a.reflections, b.reflections), overlap(a.ritualLogs, b.ritualLogs)]
         let x = a.grimoire, y = b.grimoire
-        counts += [overlap(x.practices, y.practices), overlap(x.occurrences, y.occurrences), overlap(x.actions, y.actions), overlap(x.invocations, y.invocations), overlap(x.spells, y.spells), overlap(x.enchantments, y.enchantments), overlap(x.assets, y.assets), overlap(x.arcana, y.arcana), overlap(x.echoes, y.echoes), overlap(x.events, y.events), overlap(x.revisions, y.revisions)]
+        counts += [overlap(x.practices, y.practices), overlap(x.invocations, y.invocations), overlap(x.spells, y.spells), overlap(x.enchantments, y.enchantments), overlap(x.assets, y.assets), overlap(x.arcana, y.arcana), overlap(x.echoes, y.echoes), overlap(x.events, y.events)]
+        counts.append(try store.historyConflictCount(actionIDs: y.actions.map(\.id), occurrenceIDs: y.occurrences.map(\.id), revisionIDs: y.revisions.map(\.id)))
         let duplicates = counts.reduce(0, +)
         return "Merge preview: \(duplicates) record identities already exist here and will keep their current values. Conflicting image contents are rejected before anything changes. A recovery copy is saved before import."
     }
@@ -123,6 +134,7 @@ struct SettingsView: View {
                     guard size <= BackupValidation.maximumBackupBytes else { throw InvokeDataError.invalidBackup("The selected file exceeds the 512 MB limit.") }
                     return try BackupValidation.decode(Data(contentsOf: url, options: .mappedIfSafe))
                 }.value
+                mergePreviewText = store.storageRecoveryRequired ? "The current collection could not be read safely, so merge is unavailable. You can restore this validated backup while preserving the damaged generation for recovery." : try mergeSummary(payload)
                 proposedRestore = payload; reviewRestore = true
             } catch { store.errorMessage = error.localizedDescription }
             validating = false
@@ -133,7 +145,7 @@ struct SettingsView: View {
 struct AppearanceView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.invokeTheme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @InvokeReducedMotion private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var previewTrigger = 0

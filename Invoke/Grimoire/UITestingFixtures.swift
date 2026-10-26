@@ -10,6 +10,18 @@ extension AppStore {
               UUID(uuidString: String(directory.lastPathComponent.dropFirst("InvokeUITests-".count))) != nil else { return }
         let pointer = directory.appendingPathComponent("CURRENT")
         guard !FileManager.default.fileExists(atPath: pointer.path) else { return }
+        var recovered = AppData()
+        recovered.preferences.onboardingComplete = true
+        recovered.grimoire.setupCompleted = true
+        recovered.grimoire.upgradeIntroductionSeen = true
+        var practice = PracticeDefinition()
+        practice.title = "Test recovered practice"
+        recovered.grimoire.practices = [practice]
+        let payload = BackupPayload(data: recovered, images: [:])
+        try BackupValidation.validate(payload)
+        let recovery = directory.appendingPathComponent("recovery")
+        try FileManager.default.createDirectory(at: recovery, withIntermediateDirectories: true)
+        try PersistenceCoding.encoder().encode(payload).write(to: recovery.appendingPathComponent("ui-fixture-recovery.invoke"), options: .atomic)
         let name = UUID().uuidString
         let generation = directory.appendingPathComponent("generations").appendingPathComponent(name)
         try FileManager.default.createDirectory(at: generation.appendingPathComponent("images"), withIntermediateDirectories: true)

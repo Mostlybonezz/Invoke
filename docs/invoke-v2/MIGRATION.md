@@ -8,19 +8,21 @@ Schema 1 decoding requires the real legacy fields and initializes an empty Grimo
 
 ## Atomic upgrade
 
-`AppStore.loadSnapshot` validates the legacy graph and checks every referenced image before migration. It creates a separate UUID generation, copies the referenced images, and writes:
+`AppStore` validates the JSON legacy graph and checks every referenced image before migration. It creates a separate UUID generation, copies the referenced images, and writes:
 
-- A version 2 `data.json`.
+- A `history.sqlite` database containing the schema 2 core and indexed action, occurrence and revision tables.
 - `legacy-schema-1.json`, retaining the exact original snapshot bytes, including unknown fields.
 - A complete `recovery/Before-2.0-<UUID>.invoke` portable copy of the known legacy data and images.
 
-The staged data is read back, decoded, validated, and compared to the bytes written. Only then is `CURRENT` atomically replaced. The original generation is retained, including its original images and unknown fields. A second launch of schema 2 performs no migration and creates no duplicate records or migration backup.
+The staged database is validated with SQLite integrity and foreign-key checks, the core is read back, and ledger counts are checked against the source. The raw source is compared byte-for-byte. Only then is `CURRENT` atomically replaced. The original generation is retained, including its original images and unknown fields. Pre-SQLite schema 2 JSON also migrates once, retaining `legacy-schema-2.json` and a `Before-paged-history` portable copy. Subsequent launches open the database without repeating migration.
 
 An abandoned, unreferenced stage never becomes active merely because it exists. If staging fails before the pointer switch, the original pointer remains. If current and previous snapshots cannot be read, writes are blocked and the recovery UI reports the failure; no empty data is saved over the damaged collection. The previous-snapshot fallback remains available and retains a damaged original. There is no automatic purge of previous generations.
 
 ## Save and action safety
 
-Legacy prose edits retain the existing 300 ms debounce and scene-phase flush. Discrete Grimoire actions use `commitSnapshot`, which validates and atomically writes the candidate before publishing the new in-memory state. A failed discrete write throws; it does not show successful completion. Existing unsaved prose remains in memory on a failure so the user can retry or export.
+Legacy prose edits retain the existing 300 ms debounce and scene-phase flush. Discrete Grimoire actions use `commitSnapshot`, which validates the core and affected ledger records, then commits both in one SQLite transaction before publishing success. Request IDs are unique, original actions/revisions cannot be rewritten, and foreign keys prevent orphaned practice history. A failed transaction throws and rolls back both core and ledger. Existing unsaved prose remains in memory on a failure so the user can retry or export.
+
+Ordinary launch reads the core and compact metadata rather than all action notes, occurrence snapshots and revision bodies. Chronicle uses bounded keyset pages; indexed summaries answer completion and quota questions. Portable export intentionally reconstructs the complete history. Recovery-copy discovery reads a compact manifest and file attributes at launch; choosing a restore revalidates the complete copy. An explicit recovery check can discover and validate older unindexed copies.
 
 ## Portable restore and merge
 
@@ -38,4 +40,4 @@ Do not manually delete generations or edit `CURRENT` while the app is running. U
 
 `GrimoireMigrationTests` covers a representative actual schema 1 graph, exact raw source retention, IDs and settings, idempotence, an interrupted/uncommitted stage, corrupt input, old portable imports, strict schema 2 decoding, photograph copying and a full version 2 relationship round trip. `GrimoireStoreTests` covers failed atomic actions, invalid imports, merge idempotence, and retained history. Native execution is recorded in the release acceptance log; test source alone is not execution evidence.
 
-The existing bounded JSON storage loads structured data in memory. This update does not claim a lazy on-disk database, streamed backups, power-loss-proof device storage, or end-to-end encryption. Actual disk-full, locked-device, Files-provider and LiveContainer update behavior still require corresponding device checks.
+`SQLiteHistoryTests` additionally covers ordinary launch/Today without old history payload decoding, bounded pages, stable tied-date cursors, corrections outside the visible range, chunked aggregate queries, immutable records, schema rejection and JSON-to-SQLite conversion. `GrimoireStoreTests` injects a real SQLite page-cap failure to exercise rollback. These tests still require a successful native run. Portable backups are reconstructed in memory rather than streamed; legacy and specialty collections remain in the core. This does not claim power-loss-proof device storage or end-to-end encryption. Locked-device, Files-provider and LiveContainer update behavior still require corresponding device checks.

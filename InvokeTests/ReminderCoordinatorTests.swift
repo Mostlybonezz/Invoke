@@ -103,6 +103,45 @@ final class ReminderCoordinatorTests: XCTestCase {
         XCTAssertEqual(Set(result.map(\.id)).count, 48)
         XCTAssertTrue(result.allSatisfy { !$0.body.contains("Private record") && $0.title == "Invoke" && !$0.sound })
     }
+    func testRepositoryProjectionCannotResurrectSuppressedOccurrences() throws {
+        var data = fixture()
+        let now = instant("2026-10-26T12:00:00Z")
+        XCTAssertEqual(ReminderPlanner.plan(data: data, namespace: "pure.", now: now).count, 1)
+        XCTAssertTrue(ReminderPlanner.plan(data: data, namespace: "repository.", now: now, projectSchedules: false).isEmpty)
+        data.occurrences = [try firstOccurrence(data)]
+        XCTAssertEqual(ReminderPlanner.plan(data: data, namespace: "repository.", now: now, projectSchedules: false).count, 1)
+        data.occurrences[0].superseded = true
+        XCTAssertTrue(ReminderPlanner.plan(data: data, namespace: "repository.", now: now, projectSchedules: false).isEmpty)
+    }
+    func testLazyRepositoryReminderCompletionAndUndoSurviveReopening() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("InvokeReminderTests-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let data = fixture()
+        let store = AppStore(directory: directory)
+        var configured = store.data.grimoire; configured.settings = data.settings
+        try store.commitGrimoire(configured)
+        try store.activatePractice(data.practices[0])
+        let occurrence = try firstOccurrence(data)
+        try store.ensureOccurrence(occurrence)
+        let actionTime = instant("2026-10-27T15:00:00Z")
+        let now = instant("2026-10-27T16:00:00Z")
+        let range = try XCTUnwrap(ReminderPlanner.window(settings: data.settings, now: now))
+        let before = try store.reminderProjectionData(in: range, now: now)
+        XCTAssertEqual(ReminderPlanner.plan(data: before, namespace: "repository.", now: now, projectSchedules: false).count, 1)
+        let session = try store.beginSession(occurrenceID: occurrence.id, now: actionTime)
+        let action = try store.recordAction(occurrenceID: occurrence.id, kind: .complete, sessionID: session,
+            requestID: UUID(), occurredAt: actionTime, now: actionTime)
+
+        let reopened = AppStore(directory: directory)
+        XCTAssertTrue(reopened.data.grimoire.actions.isEmpty, "Reminder reconciliation must not hydrate the whole ledger.")
+        let completed = try reopened.reminderProjectionData(in: range, now: now)
+        XCTAssertTrue(ReminderPlanner.plan(data: completed, namespace: "repository.", now: now, projectSchedules: false).isEmpty)
+        try reopened.undoAction(action.id, now: now)
+        let corrected = try reopened.reminderProjectionData(in: range, now: now)
+        XCTAssertEqual(ReminderPlanner.plan(data: corrected, namespace: "repository.", now: now, projectSchedules: false).count, 1)
+        XCTAssertTrue(reopened.data.grimoire.actions.isEmpty)
+    }
     func testArchivePauseAndDisabledPreferencesRemoveCandidates() {
         var data = fixture()
         let now = instant("2026-10-26T12:00:00Z")

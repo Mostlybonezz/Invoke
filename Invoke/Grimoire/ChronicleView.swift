@@ -26,18 +26,48 @@ struct ChronicleItem: Identifiable {
     var occurrence: PracticeOccurrence? = nil
     var timeZoneID: String? = nil
     var actionKind: ActionKind? = nil
+    var orderKey: String {
+        route == "action" ? "a:\(recordID.uuidString)" : route == "revision" ? "r:\(recordID.uuidString)" : "c:\(id)"
+    }
+}
+
+/// Only explicitly requested ledger pages are retained by the Chronicle.
+struct ChronicleLoadedHistory {
+    var page = HistoryPage()
+    var hasLoaded = false
+    mutating func append(_ incoming: HistoryPage) {
+        var actions = Set(page.actions.map(\.id)), revisions = Set(page.revisions.map(\.id))
+        page.actions.append(contentsOf: incoming.actions.filter { actions.insert($0.id).inserted })
+        page.revisions.append(contentsOf: incoming.revisions.filter { revisions.insert($0.id).inserted })
+        page.correctedActionIDs.formUnion(incoming.correctedActionIDs)
+        page.nextCursor = incoming.nextCursor
+        hasLoaded = true
+    }
 }
 
 /// A read-only projection of canonical records; viewing the Chronicle creates no credit.
 enum ChronicleTimeline {
-    static func items(data: AppData, range: DateInterval, practiceID: UUID? = nil) -> [ChronicleItem] {
+    static func precedes(_ lhs: ChronicleItem, _ rhs: ChronicleItem) -> Bool {
+        lhs.date == rhs.date ? lhs.orderKey > rhs.orderKey : lhs.date > rhs.date
+    }
+    static func merged(core: [ChronicleItem], history: [ChronicleItem], cursor: HistoryCursor?) -> [ChronicleItem] {
+        // A byte-bounded page may contain fewer than 100 records. Hold older core
+        // rows behind its frontier so unseen ledger rows cannot later jump above them.
+        let safeCore = core.filter { row in
+            guard let cursor else { return true }
+            return row.date > cursor.timestamp || (row.date == cursor.timestamp && row.orderKey >= cursor.key)
+        }
+        var seen = Set<String>()
+        return (safeCore + history).filter { seen.insert($0.id).inserted }.sorted(by: precedes)
+    }
+    static func items(data: AppData, range: DateInterval, practiceID: UUID? = nil, history: HistoryPage = HistoryPage()) -> [ChronicleItem] {
         let grimoire = data.grimoire
         let practice = grimoire.practices.first { $0.id == practiceID }
-        let reversed = Set(grimoire.actions.compactMap(\.reversesActionID))
+        let reversed = history.correctedActionIDs.union(history.actions.compactMap(\.reversesActionID))
         let titles = Dictionary(uniqueKeysWithValues: grimoire.practices.map { ($0.id, $0.title) })
         func contains(_ date: Date) -> Bool { date >= range.start && date < range.end }
         var items: [ChronicleItem] = []
-        for action in grimoire.actions where contains(action.occurredAt) && (practiceID == nil || action.practiceID == practiceID) {
+        for action in history.actions where contains(action.occurredAt) && (practiceID == nil || action.practiceID == practiceID) {
             let title = action.titleSnapshot.isEmpty ? titles[action.practiceID] ?? "Practice record" : action.titleSnapshot
             let state = reversed.contains(action.id) ? "Undone · \(action.kind.title)" : action.kind.title
             items.append(ChronicleItem(id: "action:\(action.id)", date: action.occurredAt, category: .actions, title: title,
@@ -77,7 +107,7 @@ enum ChronicleTimeline {
                 }
             }
         }
-        for revision in grimoire.revisions where contains(revision.changedAt) {
+        for revision in history.revisions where contains(revision.changedAt) {
             let linked = practiceID == nil || revision.recordID == practiceID || revision.recordID == practice?.assetID
                 || revision.recordID == practice?.invocationID || practice?.spellIDs.contains(revision.recordID) == true
             if linked {
@@ -102,7 +132,7 @@ enum ChronicleTimeline {
                                        title: title, summary: "Original ritual log · " + log.notes + (log.reflection.isEmpty ? "" : " · " + log.reflection),
                                        route: "legacyRitual", recordID: log.ritualID, contextID: log.id))
         }
-        return items.sorted { $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date }
+        return items.sorted(by: precedes)
     }
 }
 
@@ -110,6 +140,7 @@ struct ChronicleView: View {
     var practiceID: UUID? = nil
     @EnvironmentObject private var store: AppStore
     @Environment(\.invokeTheme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var search = ""
     @State private var category = "all"
     @State private var period = "30 days"
@@ -117,6 +148,14 @@ struct ChronicleView: View {
     @State private var through = Date()
     @State private var showUnrecorded = false
     @State private var pageSize = 100
+    @State private var loaded = ChronicleLoadedHistory()
+    @State private var coreItems: [ChronicleItem] = []
+    @State private var ledgerItems: [ChronicleItem] = []
+    @State private var mergedItems: [ChronicleItem] = []
+    @State private var loading = false
+    @State private var loadError = ""
+    @State private var projectionNotice = ""
+    @State private var loadID = UUID()
 
     private var calendar: Calendar { GrimoirePresentation.calendar(store.data.grimoire.settings) }
     private var range: DateInterval {
@@ -131,12 +170,23 @@ struct ChronicleView: View {
         }
         return DateInterval(start: start, end: max(start, end))
     }
-    private var items: [ChronicleItem] {
+    private var reloadKey: String {
+        "\(store.historyRevision)|\(scenePhase)|\(practiceID?.uuidString ?? "")|\(search)|\(category)|\(period)|\(range.start.timeIntervalSince1970)|\(range.end.timeIntervalSince1970)|\(showUnrecorded)"
+    }
+    private var items: [ChronicleItem] { mergedItems }
+    private var hasMore: Bool { loaded.page.nextCursor != nil || items.count > pageSize }
+    private func matches(_ item: ChronicleItem) -> Bool {
+        (category == "all" || item.category.rawValue == category)
+            && (search.isEmpty || (item.title + " " + item.summary + " " + item.category.title).localizedCaseInsensitiveContains(search))
+    }
+    @MainActor private func loadCoreItems() -> [ChronicleItem] {
         var result = ChronicleTimeline.items(data: store.data, range: range, practiceID: practiceID)
         if showUnrecorded && period != "All recorded" {
             let boundedStart = max(range.start, calendar.date(byAdding: .year, value: -1, to: range.end) ?? range.start)
             let boundedRange = DateInterval(start: boundedStart, end: range.end)
-            let occurrences = store.grimoireOccurrences(in: boundedRange).filter {
+            let projection = store.grimoireProjection(in: boundedRange)
+            projectionNotice = projection.warnings.joined(separator: "\n")
+            let occurrences = projection.occurrences.filter {
                 (practiceID == nil || $0.practiceID == practiceID) && $0.availableAt <= Date()
                 && store.occurrenceStatus($0) == .unrecorded
             }
@@ -147,10 +197,47 @@ struct ChronicleView: View {
                                             route: "occurrence", recordID: occurrence.practiceID, occurrence: occurrence, timeZoneID: occurrence.timeZoneID))
             }
         }
-        return result.filter {
-            (category == "all" || $0.category.rawValue == category)
-            && (search.isEmpty || ($0.title + " " + $0.summary + " " + $0.category.title).localizedCaseInsensitiveContains(search))
-        }.sorted { $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date }
+        return result.filter(matches).sorted(by: ChronicleTimeline.precedes)
+    }
+    @MainActor private func readPage(cursor: HistoryCursor?) throws -> HistoryPage {
+        try store.historyPage(in: range, practiceID: practiceID,
+                              includeActions: category == "all" || category == ChronicleCategory.actions.rawValue,
+                              includeRevisions: category == "all" || category == ChronicleCategory.revisions.rawValue,
+                              search: search, limit: 100, cursor: cursor)
+    }
+    @MainActor private func updateLedgerItems() {
+        // Supply an empty core so its specialty/legacy rows are not duplicated per page.
+        var core = AppData()
+        core.grimoire.practices = store.data.grimoire.practices
+        ledgerItems = ChronicleTimeline.items(data: core, range: range, practiceID: practiceID, history: loaded.page)
+        mergedItems = ChronicleTimeline.merged(core: coreItems, history: ledgerItems, cursor: loaded.page.nextCursor)
+    }
+    @MainActor private func reload() async {
+        let request = UUID(); loadID = request
+        loading = true; loadError = ""; projectionNotice = ""
+        loaded = ChronicleLoadedHistory(); coreItems = []; ledgerItems = []; mergedItems = []; pageSize = 100
+        await Task.yield()
+        guard !Task.isCancelled, loadID == request else { return }
+        do {
+            coreItems = loadCoreItems()
+            loaded.append(try readPage(cursor: nil))
+            updateLedgerItems()
+        } catch { loadError = error.localizedDescription }
+        if loadID == request { loading = false }
+    }
+    @MainActor private func loadMore() async {
+        guard !loading else { return }
+        let request = loadID
+        if items.count >= pageSize + 100 || loaded.page.nextCursor == nil { pageSize += 100; return }
+        loading = true; loadError = ""
+        await Task.yield()
+        guard !Task.isCancelled, loadID == request else { return }
+        do {
+            loaded.append(try readPage(cursor: loaded.page.nextCursor))
+            updateLedgerItems()
+            pageSize += 100
+        } catch { loadError = error.localizedDescription }
+        if loadID == request { loading = false }
     }
     var body: some View {
         let filtered = items
@@ -159,9 +246,15 @@ struct ChronicleView: View {
                 Text("What was recorded. What changed.").font(.title2).fontDesign(.serif)
                 Text("Actions and observed outcomes are separate. Undo keeps the original record with its correction.").foregroundStyle(theme.secondary)
                 filters
-                Text("\(filtered.count) matching entries · \(min(pageSize, filtered.count)) shown").font(.caption).foregroundStyle(theme.secondary)
+                Text("\(min(pageSize, filtered.count)) entries shown\(hasMore ? " · More history available" : "")").font(.caption).foregroundStyle(theme.secondary)
                     .accessibilityIdentifier("chronicle-count")
-                if filtered.isEmpty {
+                if loading { ProgressView("Loading recorded history").accessibilityIdentifier("chronicle-loading") }
+                if !loadError.isEmpty {
+                    Text(loadError).foregroundStyle(theme.accent).accessibilityIdentifier("chronicle-load-error")
+                    Button("Try loading again") { Task { await reload() } }.frame(minHeight: 44)
+                }
+                if !projectionNotice.isEmpty { Text(projectionNotice).font(.footnote).foregroundStyle(theme.accent) }
+                if filtered.isEmpty && !loading && loadError.isEmpty {
                     EmptyState(symbol: "text.book.closed", title: "No matching entries", message: "Choose another date range or record a reflection. An empty history makes no claim about what happened in your life.")
                 }
                 ForEach(Array(filtered.prefix(pageSize).enumerated()), id: \.element.id) { index, item in
@@ -173,15 +266,13 @@ struct ChronicleView: View {
                                           status: item.undone ? "Undone · original retained" : item.actionKind == .correction ? "Correction" : item.category.title)
                     }.buttonStyle(.plain).accessibilityIdentifier("chronicle-\(item.id)")
                 }
-                if filtered.count > pageSize { Button("Show 100 more") { pageSize += 100 }.frame(minHeight: 44) }
+                if hasMore { Button("Show 100 more") { Task { await loadMore() } }.frame(minHeight: 44).disabled(loading).accessibilityIdentifier("chronicle-more") }
             }.padding(20).accessibilityIdentifier("chronicle-list")
         }
         .navigationTitle("Chronicle")
         .searchable(text: $search, prompt: "Search your recorded history")
         .toolbar { ToolbarItem(placement: .topBarTrailing) { NavigationLink { ChronicleReflectionEditorView() } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("Record a reflection") } }
-        .onChange(of: search) { _, _ in pageSize = 100 }
-        .onChange(of: category) { _, _ in pageSize = 100 }
-        .onChange(of: period) { _, _ in pageSize = 100 }
+        .task(id: reloadKey) { if scenePhase == .active { await reload() } }
         .onChange(of: from) { _, value in if through < value { through = value } }
         .invokeScreen()
     }
@@ -242,8 +333,8 @@ struct ChronicleActionDetailView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.invokeTheme) private var theme
     @State private var feedback = ""
-    private var action: ActionRecord? { store.data.grimoire.actions.first { $0.id == actionID } }
-    private var undone: Bool { store.data.grimoire.actions.contains { $0.reversesActionID == actionID } }
+    private var action: ActionRecord? { store.action(id: actionID) }
+    private var undone: Bool { store.isActionCorrected(actionID) }
     var body: some View {
         Group {
             if let action {
@@ -265,7 +356,7 @@ struct ChronicleActionDetailView: View {
                                 }
                             }
                         }
-                        if let occurrence = store.data.grimoire.occurrences.first(where: { $0.id == action.occurrenceID }) {
+                        if let occurrence = store.occurrence(id: action.occurrenceID) {
                             if !action.completedStepIDs.isEmpty {
                                 GrimoireDetailText(title: "Steps recorded in this action", text: occurrence.steps.filter { action.completedStepIDs.contains($0.id) }.map(\.title).joined(separator: "\n"))
                             }
@@ -328,7 +419,7 @@ struct ChronicleRevisionView: View {
     let revisionID: UUID
     @EnvironmentObject private var store: AppStore
     @Environment(\.invokeTheme) private var theme
-    private var revision: GrimoireRevision? { store.data.grimoire.revisions.first { $0.id == revisionID } }
+    private var revision: GrimoireRevision? { store.revision(id: revisionID) }
     var body: some View {
         ScrollView {
             if let revision {

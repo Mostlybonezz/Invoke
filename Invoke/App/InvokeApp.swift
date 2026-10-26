@@ -5,7 +5,6 @@ struct InvokeApp: App {
     @StateObject private var store: AppStore
     @StateObject private var reminders = ReminderCoordinator()
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     init() {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
@@ -26,7 +25,7 @@ struct InvokeApp: App {
             InvokeRootView().environmentObject(store).environmentObject(reminders)
                 .uiTestingDynamicType()
                 .environment(\.invokeTheme, InvokeTheme.named(store.data.preferences.theme))
-                .environment(\.accessibilityReduceMotion, reduceMotion || !store.data.grimoire.settings.motionEnabled)
+                .environment(\.invokeMotionDisabled, !store.data.grimoire.settings.motionEnabled)
                 .preferredColorScheme(InvokeTheme.named(store.data.preferences.theme).scheme)
                 .tint(InvokeTheme.named(store.data.preferences.theme).accent)
                 .onChange(of: scenePhase) { _, phase in
@@ -34,6 +33,7 @@ struct InvokeApp: App {
                     else { reminders.schedule(store: store) }
                 }
                 .onChange(of: store.data.grimoire) { _, _ in reminders.schedule(store: store) }
+                .onChange(of: store.historyRevision) { _, _ in reminders.schedule(store: store) }
                 .task { reminders.schedule(store: store) }
         }
     }

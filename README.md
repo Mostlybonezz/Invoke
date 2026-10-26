@@ -1,16 +1,30 @@
 # Invoke
 
-A private, native iPhone app for authoring a story, living its next believable scene, and keeping what the experience teaches. The source is public; your personal writing and photos stay on your iPhone.
+A private, native iPhone app for chosen practices, intentions, stories and the changes you actually observe. **Invoke 2.0 — The Living Grimoire** brings the complete Life Maintenance Codex into Today, Quests, Grimoire, Invocations and Chronicle while retaining the original stories, constellation, beliefs, rituals and relics. The source is public; personal writing and photos belong to your local collection.
+
+[2.0 user guide](docs/invoke-v2/USER_GUIDE.md) · [Acceptance evidence](docs/invoke-v2/ACCEPTANCE.md) · [Upgrade and recovery](docs/invoke-v2/MIGRATION.md)
 
 ## Download and LiveContainer
 
 [GitHub build status](https://github.com/Mostlybonezz/Invoke/actions/workflows/ipa.yml) · [Releases](https://github.com/Mostlybonezz/Invoke/releases/latest) · [IPA download](https://github.com/Mostlybonezz/Invoke/releases/latest/download/Invoke.ipa)
 
-The GitHub Actions workflow builds and tests on macOS before publishing a release. [Invoke 1.1.0](https://github.com/Mostlybonezz/Invoke/releases/tag/v1.1.0) is published with the IPA, source feed, icon, checksum, and build metadata. The IPA uses an ad-hoc signature for LiveContainer or another signing tool; it is not App Store or Apple-distribution signed. Downloading it in Safari alone does not install it on your Home Screen.
+The GitHub Actions workflow builds and tests on macOS before publishing a release with its IPA, source feed, icon, checksum and build metadata. Check the release version and its verification record before installing. The IPA uses an ad-hoc signature for LiveContainer or another signing tool; it is not App Store or Apple-distribution signed. Downloading it in Safari alone does not install it on your Home Screen.
 
 **LiveContainer source URL:** `https://github.com/Mostlybonezz/Invoke/releases/latest/download/source.json`
 
-See [LiveContainer setup](docs/LIVECONTAINER.md) for adding the source or importing the downloaded IPA from Files. Invoke requires iOS 17 or later. Actual physical-iPhone compatibility and accessibility testing are still pending; CI results do not establish those.
+See [LiveContainer setup](docs/LIVECONTAINER.md) for adding the source/importing an IPA and the [2.0 upgrade guide](docs/invoke-v2/USER_GUIDE.md#update-through-livecontainer-without-losing-your-collection) for preserving the existing data container. Export a complete backup outside the host before updating. The intended environment is iOS 27 with LiveContainer 3.8.10; the exact physical-device/host checks are recorded separately in [LiveContainer verification](docs/invoke-v2/LIVECONTAINER.md). Invoke requires iOS 17 or later. Native CI does not by itself prove physical-device compatibility or accessibility.
+
+## New in 2.0
+
+- Five connected areas: Today foregrounds chosen actions and consequential deadlines; Quests provides calendar/filter views; Grimoire holds inactive templates and owned practices; Invocations connect direction, actions and observations; Chronicle preserves the history and corrections.
+- Complete Codex coverage: **254 original source entries**, normalized into **252 canonical templates/references**, with eight reference-only records. Search plain/fantasy names and full original wording. Activation is explicit and personal copies survive library updates.
+- Daily/weekday, weekly/quota, monthly, quarterly, semiannual, annual, actual-completion interval, event and condition schedules. Importance remains separate from frequency; unknown dates stay unknown.
+- Durable sessions, steps, partial/smaller versions, explicit skip, deferral, snooze, pause/archive and audited undo. Recorded actions and observed outcomes are distinct.
+- Saved methods, Enchantments, asset/supply inspections, optional replacement reserves, Bonds planning, Arcana/belief records and comparative Echoes.
+- Additive schema-2 storage keeps every original collection and photograph. Upgrade checkpoints, portable export, previewed merge/replace and recovery preserve a path back to the original data.
+- Optional local reminders with private previews, quiet hours and a bounded queue. The app remains usable without notification permission.
+
+The current [acceptance matrix](docs/invoke-v2/ACCEPTANCE.md) maps all 34 brief scenarios to source, tests and actual verification. At its documentation checkpoint, portable checks passed; final native 2.0 CI, screenshot inspection and device results were still pending. Historical results below refer to their named versions only.
 
 ## Open and run
 
@@ -30,7 +44,7 @@ xcodebuild -project Invoke.xcodeproj -scheme Invoke \
   -derivedDataPath build/DerivedData test
 ```
 
-## New in 1.1.0
+## Retained from 1.1.0
 
 - Tap Sanctuary’s constellation to zoom into a chapter map. Tap a labeled star to zoom into its scene script, intended action, cue, smaller version, and reflections. Use the chapter selector, page controls, or readable scene list to reach every scene.
 - Astral Theatre is the new-install default; saved themes and version 1 writing/backups are preserved.
@@ -42,7 +56,7 @@ xcodebuild -project Invoke.xcodeproj -scheme Invoke \
 
 ## Implemented in source
 
-- Four native tabs: Sanctuary, Stories, Grimoire, and Relic Cabinet.
+- Five native tabs: Today, Quests, Grimoire, Invocations and Chronicle. Original Sanctuary, Stories, Grimoire and Relic Cabinet remain reachable through the new navigation.
 - Three immediately switchable semantic themes, persisted appearance and effects settings, themed sheets and writing surfaces, original vector sigils, and an indigo/orange celestial app icon.
 - Six-step resumable story authoring, free prose, template preview with explicit acceptance, nine shapes, seven initial modes, custom primary modes, and up to two secondary modes.
 - Independent manifestations, beliefs, and rituals; searchable lists; shared connections; belief wording history; reusable ritual templates and separate performance logs.
@@ -75,26 +89,29 @@ Metal compilation passed. The shader rendering and interaction checks remain ope
 | --- | --- |
 | `Invoke/App` | Entry point, tabs, Sanctuary, onboarding, settings, backups, previews |
 | `Invoke/Core` | Codable records, validated persistence, images, backups, examples |
+| `Invoke/Grimoire` | Living Grimoire models, scheduling, actions, reminders, Codex and new feature screens |
+| `Invoke/Resources/Codex.json` | Versioned inactive library with all original source mappings |
 | `Invoke/Design` | Semantic themes, typography, controls, vector ornaments and sigils |
 | `Invoke/Stories` | Authoring, scenes, reflection, connections, constellations, keepsakes |
 | `Invoke/Library` | Grimoire, relic workshop, photo display, PDF/share/print |
 | `Invoke/Effects` | Native Metal source, finite rendering wrapper, prototype, MIT notice |
-| `InvokeTests` | Persistence, migration, and story-flow tests |
-| `InvokeUITests` | Native constellation navigation, scene editing, and theme checks |
+| `InvokeTests` | Persistence, migration, recurrence, action/undo, reminders, Codex, Chronicle and story-flow tests |
+| `InvokeUITests` | Native core/relaunch, recovery, layout, constellation, scene and theme checks |
 | `ThirdParty` | Pinned original shader source, license, manifest |
 | `DesignReferences` (local delivery only) | Original supplied visual references; omitted from the public repository and never used as app UI |
 | `Tools` | Repeatable project generation, icon rendering, portable source checks |
+| `docs/invoke-v2` | Audit, product/calendar decisions, complete content mapping, migration, user guide and acceptance record |
 
-## Deliberate first-version boundaries
+## Runtime and verification boundaries
 
-Core use is offline. There are no accounts, cloud sync, analytics, social features, subscriptions, AI calls, or notification permission requests. Photos use the native photo picker; direct camera capture and reminders are not included. Custom modes are free text for the primary mode; secondary selections use the seven supplied modes.
+Core use is offline. There are no accounts, cloud sync, analytics, subscriptions, runtime AI calls, contact scraping or remote push dependency. Photos use the native photo picker; direct camera capture is not included. Local notifications are optional and permission/host dependent; Invoke schedules a bounded future horizon and refreshes it when used. Custom story modes are free text for the primary mode; secondary selections use the seven supplied modes.
 
 The visual kit is intentionally replaceable. Native paper flecks, orbit linework, arches, placeholders, and geometric marks establish the three directions without extracting flattened UI from the supplied images. High-fidelity botanical engravings, velvet photography, hand-drawn curtains, and final brand artwork remain art-production work. No photograph of The Witness is fabricated as the user's real object.
 
-Storage and backups use bounded, in-memory JSON rather than a database/streamed archive. Backups include image checksums and are capped at 512 MB; large image operations and writes can pause the UI. Device performance and low-storage behavior must be checked. See [Data reliability](docs/DATA-RELIABILITY.md) for interruption windows, recovery files, image sizing, and privacy limits.
+Runtime storage uses SQLite transactions for the core snapshot and indexed action/occurrence/revision history. Chronicle requests bounded history pages; ordinary startup does not decode the full new action ledger. Original collections and specialty records still load with the core. Portable backups remain complete JSON archives with image checksums and a 512 MB cap; explicit exports, imports and large image operations can pause the UI. Native performance and low-storage behavior still need measured verification. See [Migration and recovery](docs/invoke-v2/MIGRATION.md) and [Data and scheduling](docs/invoke-v2/DATA_AND_SCHEDULING.md).
 
 ## Maintenance
 
-After adding source files, run `python3 Tools/generate_project.py` to regenerate the project. Run `python3 Tools/check_source.py` for portable package checks. Installing `tree-sitter` and `tree-sitter-swift` also enables the optional grammar check. `Tools/draw_icon.py` requires Pillow only when regenerating the original app icon; none of these Python packages are app dependencies.
+After adding source files, run `python3 Tools/generate_project.py` to regenerate the project. Run `python3 Tools/check_source.py` for portable package checks and `python3 Tools/build_codex.py --check` for full content coverage. Installing `tree-sitter` and `tree-sitter-swift` also enables the optional grammar check. `Tools/draw_icon.py` requires Pillow only when regenerating the original app icon; none of these Python packages are app dependencies.
 
 See [Asset inventory](docs/ASSET-INVENTORY.md), [Shader mapping](docs/Shader-Mapping.md), and [Testing checklist](docs/TESTING.md) for completed checks and remaining device validation.

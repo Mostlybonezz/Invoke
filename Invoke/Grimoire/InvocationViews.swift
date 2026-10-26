@@ -14,6 +14,7 @@ struct InvocationsView: View {
             LazyVStack(alignment: .leading, spacing: 18) {
                 Text(store.data.grimoire.settings.fantasyLanguage ? "What are you calling into your life?" : "Goals and chosen directions").font(.title2).fontDesign(.serif)
                 Text("Choose a direction. Connect actions within your control. Observe what actually changes.").foregroundStyle(theme.secondary)
+                NavigationLink { GrimoireView() } label: { Label("Original manifestations & beliefs", systemImage: "moon") }
                 Toggle("Show archived Invocations", isOn: $archived)
                 ForEach(values) { invocation in
                     NavigationLink { InvocationDetailView(invocationID: invocation.id) } label: {
@@ -26,12 +27,15 @@ struct InvocationsView: View {
                     }.buttonStyle(.plain)
                 }
                 if values.isEmpty { ContentUnavailableView("A direction of your own", systemImage: "sparkles", description: Text("Add an Invocation. An exploratory intention does not need a numerical target.")) }
-                SectionEyebrow(text: "Your original collection")
-                NavigationLink { StoriesView() } label: { Label("Stories, scenes & constellations", systemImage: "book") }.accessibilityIdentifier("legacy-stories")
-                NavigationLink { GrimoireView() } label: { Label("Original manifestations & beliefs", systemImage: "moon") }
             }.padding(20)
         }.navigationTitle("Invocations").searchable(text: $search).invokeScreen()
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { adding = true } label: { Image(systemName: "plus") }.accessibilityLabel("New Invocation").accessibilityIdentifier("invocation-add") } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink { StoriesView() } label: { Image(systemName: "book").frame(width: 44, height: 44) }
+                        .accessibilityLabel("Stories, scenes and constellations").accessibilityIdentifier("legacy-stories")
+                }
+                ToolbarItem(placement: .topBarTrailing) { Button { adding = true } label: { Image(systemName: "plus") }.accessibilityLabel("New Invocation").accessibilityIdentifier("invocation-add") }
+            }
             .sheet(isPresented: $adding) { NavigationStack { InvocationEditorView() } }
     }
 }
@@ -102,12 +106,10 @@ struct InvocationDetailView: View {
     @State private var editing = false
     @State private var addPractice = false
     @State private var observing = false
+    @State private var observationToEdit: InvocationObservation?
     private var invocation: Invocation? { store.data.grimoire.invocations.first { $0.id == invocationID } }
     private var practices: [PracticeDefinition] { store.data.grimoire.practices.filter { $0.invocationID == invocationID } }
-    private var actions: [ActionRecord] {
-        let ids = Set(practices.map(\.id))
-        return ScheduleEngine.activeActions(store.data.grimoire.actions).filter { ids.contains($0.practiceID) && $0.kind == .complete }
-    }
+    private var actionCount: Int { store.completionCount(practiceIDs: practices.map(\.id)) }
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
@@ -116,7 +118,7 @@ struct InvocationDetailView: View {
                     Text(invocation.title).font(.largeTitle).fontDesign(.serif)
                     GrimoireDetailText(title: "Intention", text: invocation.intention)
                     GrimoireDetailText(title: "What it would mean", text: invocation.outcome)
-                    Text("\(actions.count) linked actions recorded").font(.headline).accessibilityIdentifier("invocation-action-count")
+                    Text("\(actionCount) linked actions recorded").font(.headline).accessibilityIdentifier("invocation-action-count")
                     Text("Action history and observed outcomes are kept separately.").font(.footnote).foregroundStyle(theme.secondary)
                     ForEach(invocation.milestones) { milestone in
                         Label { VStack(alignment: .leading, spacing: 4) { Text(milestone.title); if !milestone.notes.isEmpty { Text(milestone.notes).font(.caption) } } } icon: { Image(systemName: milestone.completedAt == nil ? "circle" : "checkmark.circle.fill") }
@@ -133,14 +135,23 @@ struct InvocationDetailView: View {
                     if let date = invocation.reviewDate { Label("Review \(date.formatted(date: .abbreviated, time: .omitted))", systemImage: "calendar") }
                     SectionEyebrow(text: "Actual observations")
                     ForEach(invocation.observations.sorted { $0.observedAt > $1.observedAt }) { observation in
-                        InvokeCard { VStack(alignment: .leading, spacing: 8) { Text(observation.observedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption); Text(observation.text); if let value = observation.measurement { Text("\(value.formatted()) \(observation.unit)") } } }
+                        InvokeCard {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(observation.observedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption)
+                                Text(observation.text)
+                                if let value = observation.measurement { Text("\(value.formatted()) \(observation.unit)") }
+                                Button("Correct observation") { observationToEdit = observation }
+                                    .buttonStyle(.bordered)
+                                    .accessibilityIdentifier("invocation-observation-edit-\(observation.id)")
+                            }
+                        }
                     }
                     Button("Record an observation") { observing = true }.buttonStyle(.bordered)
                     if let id = invocation.legacyStoryID { NavigationLink("Original story") { StoryDetailView(storyID: id) } }
                     if let id = invocation.legacyEntryID { NavigationLink("Original manifestation") { EntryDetailView(entryID: id) } }
                     GrimoireDetailText(title: "Notes", text: invocation.notes)
                     DisclosureGroup("Changes to this Invocation") {
-                        ForEach(store.data.grimoire.revisions.filter { $0.recordID == invocationID }.sorted { $0.changedAt > $1.changedAt }) { revision in
+                        ForEach(store.revisions(for: invocationID)) { revision in
                             VStack(alignment: .leading) { Text(revision.changedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption); Text(revision.summary) }.padding(.vertical, 6)
                         }
                     }
@@ -152,26 +163,41 @@ struct InvocationDetailView: View {
             .sheet(isPresented: $editing) { if let invocation { NavigationStack { InvocationEditorView(draft: invocation) } } }
             .sheet(isPresented: $addPractice) { NavigationStack { PracticeEditorView(draft: PracticeDefinition(invocationID: invocationID)) } }
             .sheet(isPresented: $observing) { NavigationStack { InvocationObservationEditor(invocationID: invocationID) } }
+            .sheet(item: $observationToEdit) { observation in NavigationStack { InvocationObservationEditor(invocationID: invocationID, observation: observation) } }
     }
 }
 
 struct InvocationObservationEditor: View {
     let invocationID: UUID
+    private let isEditing: Bool
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
-    @State private var value = InvocationObservation()
+    @State private var value: InvocationObservation
+    init(invocationID: UUID, observation: InvocationObservation? = nil) {
+        self.invocationID = invocationID
+        self.isEditing = observation != nil
+        _value = State(initialValue: observation ?? InvocationObservation())
+    }
     var body: some View {
         Form {
-            GrimoireTextField(label: "What did you actually observe?", text: $value.text)
+            GrimoireTextField(label: "What did you actually observe?", text: $value.text, identifier: "invocation-observation-text")
             DatePicker("Observed at", selection: $value.observedAt, in: ...Date())
             OptionalNumberField(title: "Measurement (optional)", number: $value.measurement)
             TextField("Unit / meaning", text: $value.unit)
-        }.navigationTitle("Record observation").invokeScreen().toolbar {
+            if isEditing { Text("Saving keeps the previous value in Chronicle's change history. This corrects the same observation without adding another outcome.").font(.footnote) }
+        }.navigationTitle(isEditing ? "Correct observation" : "Record observation").invokeScreen().toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) { Button("Save") { store.presentGrimoireError {
-                guard var invocation = store.data.grimoire.invocations.first(where: { $0.id == invocationID }) else { return }
-                invocation.observations.append(value); try store.saveInvocation(invocation); dismiss()
-            } }.disabled(value.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+                guard var invocation = store.data.grimoire.invocations.first(where: { $0.id == invocationID }) else { throw InvokeDataError.invalidBackup("This Invocation is unavailable. The observation was not saved.") }
+                if let index = invocation.observations.firstIndex(where: { $0.id == value.id }) {
+                    invocation.observations[index] = value
+                } else if isEditing {
+                    throw InvokeDataError.invalidBackup("This observation is unavailable. The correction was not saved.")
+                } else {
+                    invocation.observations.append(value)
+                }
+                try store.saveInvocation(invocation); dismiss()
+            } }.disabled(value.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("invocation-observation-save") }
         }
     }
 }

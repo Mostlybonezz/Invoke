@@ -1,0 +1,2 @@
+# Keep executable scripts usable in CI after editing or checking out on Windows.
+*.sh text eol=lf

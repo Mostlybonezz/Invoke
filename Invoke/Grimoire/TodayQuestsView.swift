@@ -90,8 +90,7 @@ struct TodayView: View {
                 }
                 NavigationLink { ChronicleView() } label: { Label("Reflect in the Chronicle", systemImage: "square.and.pencil") }
                 if settings.recognitionEnabled {
-                    let actual = ScheduleEngine.activeActions(store.data.grimoire.actions).filter { $0.kind == .complete }
-                    let sessions = Set(actual.map(\.sessionID)).count
+                    let sessions = store.completionCount()
                     if sessions > 0 {
                         InvokeCard { VStack(alignment: .leading, spacing: 6) {
                             Label(sessions >= 25 ? "A practice taking shape" : sessions >= 10 ? "Ten moments witnessed" : "A recorded beginning", systemImage: "seal").font(.headline)
@@ -99,11 +98,13 @@ struct TodayView: View {
                         } }
                     }
                 }
-                NavigationLink { SanctuaryView() } label: { Label("Story sanctuary & constellation", systemImage: "sparkle") }.accessibilityIdentifier("legacy-sanctuary")
                 Text(store.saveState).font(.caption).foregroundStyle(theme.secondary)
             }.padding(20)
         }.navigationTitle("Today").navigationBarTitleDisplayMode(.inline).invokeScreen()
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { NavigationLink { SettingsView() } label: { Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44) }.accessibilityLabel("Settings").accessibilityIdentifier("today-settings") } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { NavigationLink { SanctuaryView() } label: { Image(systemName: "sparkles").frame(width: 44, height: 44) }.accessibilityLabel("Story sanctuary and constellation").accessibilityIdentifier("legacy-sanctuary") }
+                ToolbarItem(placement: .topBarTrailing) { NavigationLink { SettingsView() } label: { Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44) }.accessibilityLabel("Settings").accessibilityIdentifier("today-settings") }
+            }
             .sheet(isPresented: $adding) { NavigationStack { PracticeEditorView() } }
             .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { now = $0 }
             .onChange(of: scenePhase) { _, phase in if phase == .active { now = Date() } }

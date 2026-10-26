@@ -7,10 +7,23 @@ struct PracticeEditorView: View {
     @State private var effectiveFrom = Date()
     init(draft: PracticeDefinition = PracticeDefinition()) { _draft = State(initialValue: draft) }
     private var existing: Bool { store.data.grimoire.practices.contains { $0.id == draft.id } }
+    private var validationMessage: String? {
+        if draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Give this practice a title." }
+        if draft.schedule.kind == .weekdays && draft.schedule.weekdays.isEmpty { return "Choose at least one weekday." }
+        if draft.schedule.kind == .event && draft.schedule.eventName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Name the event that makes this practice available." }
+        if let end = draft.schedule.endDate, end < draft.schedule.startDate { return "The schedule's end date must be on or after its start date." }
+        if let effort = draft.effortMinutes, !(1...100_000).contains(effort) { return "Enter a positive effort estimate, or leave it empty." }
+        if draft.steps.contains(where: { $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { return "Give each step a title, or remove the empty step." }
+        return nil
+    }
     private var previews: [PracticeOccurrence] {
         let calendar = ScheduleEngine.calendar(zone: ScheduleEngine.zone(for: draft.schedule, settings: store.data.grimoire.settings), weekStart: store.data.grimoire.settings.weekStartsOn)
-        let start = ScheduleEngine.date(draft.schedule.startDate, in: calendar) ?? Date()
-        return Array(ScheduleEngine.occurrences(for: draft, in: DateInterval(start: start, end: calendar.date(byAdding: .year, value: 3, to: start)!), settings: store.data.grimoire.settings, actions: store.data.grimoire.actions, events: store.data.grimoire.events, limit: 8).prefix(3))
+        let anchor = ScheduleEngine.date(draft.schedule.startDate, in: calendar) ?? Date()
+        let next = calendar.startOfDay(for: existing ? effectiveFrom : Date())
+        let start = !existing && [.once, .unscheduled].contains(draft.schedule.kind) ? anchor : max(anchor, next)
+        var preview = draft
+        if existing { preview.version += 1; preview.effectiveFrom = effectiveFrom }
+        return Array(store.schedulePreview(for: preview, in: DateInterval(start: start, end: calendar.date(byAdding: .year, value: 3, to: start)!), limit: 8).prefix(3))
     }
     var body: some View {
         Form {
@@ -29,12 +42,13 @@ struct PracticeEditorView: View {
             ScheduleEditorFields(rule: $draft.schedule, settings: store.data.grimoire.settings)
             Section("Schedule preview") {
                 Text(ScheduleEngine.summary(draft.schedule)).accessibilityIdentifier("quest-schedule-preview")
+                Text(existing ? "Next occurrences under this edit, from its effective date." : "Next scheduled opportunities. A past one-time obligation keeps its original date.").font(.caption)
                 if previews.isEmpty {
                     Text(draft.schedule.kind == .event ? "An occurrence becomes available when you record the matching event." : draft.schedule.kind == .afterCompletion && draft.schedule.lastActualCompletion == nil ? "No previous completion is assumed. Record an actual session to anchor the next interval." : "No occurrences in this preview. Review the dates and selected weekdays.").font(.footnote)
                 }
                 ForEach(previews) { item in
                     VStack(alignment: .leading) {
-                        Text(item.availableAt.formatted(date: .abbreviated, time: draft.schedule.slots.isEmpty ? .omitted : .shortened))
+                        Text(GrimoireHistoryDate.string(item.availableAt, zoneID: item.timeZoneID, includeTime: !draft.schedule.slots.isEmpty))
                         if item.requiredSessions > 1 { Text("\(item.requiredSessions) distinct sessions in this period").font(.caption) }
                     }
                 }
@@ -95,12 +109,15 @@ struct PracticeEditorView: View {
                     Text("This is your copy. Library updates will not replace your wording or schedule.").font(.footnote)
                 }
             }
+            if let validationMessage {
+                Section { Label(validationMessage, systemImage: "info.circle").font(.footnote) }
+            }
         }.navigationTitle(existing ? "Edit practice" : "New quest or ritual").navigationBarTitleDisplayMode(.inline).invokeScreen()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { store.presentGrimoireError { try store.savePractice(draft, effectiveFrom: effectiveFrom); dismiss() } }
-                        .disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("quest-save")
+                        .disabled(validationMessage != nil).accessibilityIdentifier("quest-save")
                 }
             }
     }

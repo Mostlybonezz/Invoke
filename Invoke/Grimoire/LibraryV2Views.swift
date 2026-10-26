@@ -48,19 +48,20 @@ struct LivingGrimoireView: View {
                     Toggle("Show archived records", isOn: $archive).accessibilityIdentifier("grimoire-archive")
                 }
                 shelfContent
-                Divider().padding(.vertical, 4)
-                SectionEyebrow(text: "Familiar pages")
-                NavigationLink { GrimoireView() } label: {
-                    GrimoireRecordRow(title: "Original Grimoire", subtitle: "Your manifestations, beliefs, rituals and their original history", symbol: "book")
-                }.buttonStyle(.plain)
-                NavigationLink { RelicCabinetView() } label: {
-                    GrimoireRecordRow(title: "Relic Cabinet", subtitle: "Your objects, photographs, dedications and keepsakes", symbol: "sparkles")
-                }.buttonStyle(.plain)
             }.padding(20)
         }
         .navigationTitle("Grimoire")
         .searchable(text: $search, prompt: "Names, meanings, instructions, source IDs")
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { creationMenu } }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Menu {
+                    NavigationLink { GrimoireView() } label: { Label("Original Grimoire", systemImage: "book") }.accessibilityIdentifier("legacy-grimoire")
+                    NavigationLink { RelicCabinetView() } label: { Label("Relic Cabinet", systemImage: "sparkles") }.accessibilityIdentifier("legacy-relics")
+                } label: { Image(systemName: "books.vertical").frame(width: 44, height: 44) }
+                    .accessibilityLabel("Original collection").accessibilityIdentifier("legacy-collection-menu")
+            }
+            ToolbarItem(placement: .topBarTrailing) { creationMenu }
+        }
         .task { loadTemplates() }
         .invokeScreen()
     }

@@ -104,36 +104,37 @@ final class GrimoireMigrationTests: XCTestCase {
         XCTAssertEqual(AppStore(directory: root).data.schemaVersion, 2)
     }
     @MainActor func testMissingSchemaTwoGrimoireIsCorruptionNotEmptyReset() throws {
-        let root = try directory(); let store = AppStore(directory: root)
-        try store.saveSpell(Spell(title: "Keep this record"))
-        let generation = try String(contentsOf: root.appendingPathComponent("CURRENT"), encoding: .utf8)
-        let snapshot = root.appendingPathComponent("generations/\(generation)/data.json")
-        var envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: snapshot)) as? [String: Any])
-        var data = try XCTUnwrap(envelope["data"] as? [String: Any]); data.removeValue(forKey: "grimoire"); envelope["data"] = data
-        let missing = try JSONSerialization.data(withJSONObject: envelope)
+        let root = try directory(), generation = UUID().uuidString
+        let folder = root.appendingPathComponent("generations/\(generation)")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("images"), withIntermediateDirectories: true)
+        var original = AppData(); original.grimoire.spells = [Spell(title: "Keep this record")]
+        var data = try XCTUnwrap(JSONSerialization.jsonObject(with: PersistenceCoding.encoder().encode(original)) as? [String: Any])
+        let valid = try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "writtenAt": 1_700_000_000_000, "data": data])
+        try valid.write(to: folder.appendingPathComponent("previous.json"))
+        data.removeValue(forKey: "grimoire")
         XCTAssertThrowsError(try PersistenceCoding.decoder().decode(AppData.self, from: JSONSerialization.data(withJSONObject: data)))
-        try missing.write(to: snapshot)
-        // Previous snapshot is the honest recovery source, never a silently accepted empty v2 payload.
+        let damaged = try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "writtenAt": 1_700_000_000_000, "data": data])
+        try damaged.write(to: folder.appendingPathComponent("data.json"))
+        try Data(generation.utf8).write(to: root.appendingPathComponent("CURRENT"))
         let reopened = AppStore(directory: root)
-        XCTAssertNotNil(reopened.errorMessage)
+        XCTAssertNotNil(reopened.errorMessage); XCTAssertFalse(reopened.storageRecoveryRequired)
+        XCTAssertEqual(reopened.data.grimoire.spells.first?.title, "Keep this record")
+        XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent("data.json")), damaged)
     }
     @MainActor func testPhotoAndLegacyLinksSurviveShadowMigration() throws {
-        let root = try directory(), first = AppStore(directory: root)
+        let root = try directory()
         let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).jpegData(withCompressionQuality: 0.8) { context in
             UIColor.orange.setFill(); context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
         }
-        let name = try first.importPhoto(image)
-        first.data.relics.append(Relic(name: "Synthetic keepsake", photoFiles: [name])); first.flush()
-        let sourceImage = try Data(contentsOf: XCTUnwrap(first.imageURL(name)))
-        let generation = try String(contentsOf: root.appendingPathComponent("CURRENT"), encoding: .utf8)
-        let snapshot = root.appendingPathComponent("generations/\(generation)/data.json")
-        var envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: snapshot)) as? [String: Any])
-        var data = try XCTUnwrap(envelope["data"] as? [String: Any]); data["schemaVersion"] = 1; data.removeValue(forKey: "grimoire"); envelope["data"] = data
-        try JSONSerialization.data(withJSONObject: envelope).write(to: snapshot)
+        let name = UUID().uuidString + ".jpg"
+        var original = AppData(); original.relics = [Relic(name: "Synthetic keepsake", photoFiles: [name])]
+        let (generation, _) = try writeLegacy(original, at: root)
+        let oldImage = root.appendingPathComponent("generations/\(generation)/images/\(name)")
+        try image.write(to: oldImage)
         let upgraded = AppStore(directory: root)
         XCTAssertNil(upgraded.errorMessage); XCTAssertEqual(upgraded.data.relics[0].photoFiles, [name])
-        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(upgraded.imageURL(name))), sourceImage)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("generations/\(generation)/images/\(name)").path))
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(upgraded.imageURL(name))), image)
+        XCTAssertEqual(try Data(contentsOf: oldImage), image)
     }
     @MainActor func testVersionTwoBackupRoundTripsAllNewCoreRelationships() throws {
         let source = AppStore(directory: try directory())

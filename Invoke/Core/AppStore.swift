@@ -35,7 +35,8 @@ final class AppStore: ObservableObject {
     var storageRecoveryRequired: Bool { diskWritesBlocked }
     let grimoireQueryCache = GrimoireQueryCache()
     private var lastPersisted: AppData
-    private var lastSnapshotBytes: Data?
+    var historyRepository: SQLiteHistoryRepository?
+    @Published private(set) var historyRevision = 0
     private var pendingImportFiles: Set<String> = []
     private let fileManager = FileManager.default
 
@@ -58,117 +59,150 @@ final class AppStore: ObservableObject {
         do {
             try fileManager.createDirectory(at: self.directory, withIntermediateDirectories: true)
             if fileManager.fileExists(atPath: pointerURL.path) {
-                let name = try String(contentsOf: pointerURL, encoding: .utf8)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard UUID(uuidString: name) != nil else {
-                    throw InvokeDataError.invalidBackup("The local storage pointer is damaged.")
-                }
+                let name = try String(contentsOf: pointerURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard UUID(uuidString: name) != nil else { throw InvokeDataError.invalidBackup("The local storage pointer is damaged.") }
                 generationName = name
-                do {
-                    try loadSnapshot(at: generationURL.appendingPathComponent("data.json"))
-                } catch {
-                    // A newer app's valid format must never be silently downgraded.
-                    if let dataError = error as? InvokeDataError, case .unsupportedVersion = dataError { throw error }
-                    // Retain the damaged latest file for recovery before permitting later saves.
-                    let originalError = error
-                    do {
-                        try loadSnapshot(at: generationURL.appendingPathComponent("previous.json"))
-                        let damaged = generationURL.appendingPathComponent("data.json")
-                        if fileManager.fileExists(atPath: damaged.path) {
-                            try fileManager.copyItem(at: damaged, to: generationURL.appendingPathComponent("damaged-\(UUID().uuidString).json"))
-                        }
-                        if let recovered = lastSnapshotBytes { try writeProtected(recovered, to: damaged) }
-                        errorMessage = "Invoke recovered the previous saved version because the latest file was damaged. Export a backup now. The damaged file has been retained."
-                    } catch {
-                        throw originalError
+                let sqlite = generationURL.appendingPathComponent("history.sqlite")
+                if fileManager.fileExists(atPath: sqlite.path) {
+                    let repository = try SQLiteHistoryRepository(url: sqlite)
+                    let core = try repository.loadCore()
+                    try repository.validateCore(core)
+                    try verifyPhotos(core, in: imagesURL)
+                    historyRepository = repository
+                    suppressAutosave = true; data = core; suppressAutosave = false
+                } else {
+                    let latest = generationURL.appendingPathComponent("data.json")
+                    let snapshot: (DiskSnapshot, Data)
+                    var recoveredPrevious = false
+                    do { snapshot = try readLegacySnapshot(at: latest) }
+                    catch {
+                        if let dataError = error as? InvokeDataError, case .unsupportedVersion = dataError { throw error }
+                        let originalError = error
+                        do { snapshot = try readLegacySnapshot(at: generationURL.appendingPathComponent("previous.json")); recoveredPrevious = true }
+                        catch { throw originalError }
+                    }
+                    try migrateLegacySnapshot(snapshot.0, bytes: snapshot.1)
+                    if recoveredPrevious {
+                        errorMessage = "Invoke recovered the previous saved version. The damaged original generation was retained, and a recovery copy is available in Settings."
                     }
                 }
             } else {
+                let generations = self.directory.appendingPathComponent("generations", isDirectory: true)
+                if fileManager.fileExists(atPath: generations.path), !(try fileManager.contentsOfDirectory(atPath: generations.path)).isEmpty {
+                    throw InvokeDataError.storageUnavailable("The storage pointer is missing but older generations remain. They were preserved for recovery.")
+                }
                 try fileManager.createDirectory(at: imagesURL, withIntermediateDirectories: true)
-                let bytes = try PersistenceCoding.encoder().encode(DiskSnapshot(data: data))
-                try writeProtected(bytes, to: generationURL.appendingPathComponent("data.json"))
+                let repository = try SQLiteHistoryRepository(url: generationURL.appendingPathComponent("history.sqlite"), create: true)
+                try repository.seed(initial)
                 try writeProtected(Data(generationName.utf8), to: pointerURL)
-                lastSnapshotBytes = bytes
+                historyRepository = repository
             }
             lastPersisted = data
-        } catch {
-            // Do not silently overwrite corrupt or inaccessible writing with an empty collection.
-            diskWritesBlocked = true
-            saveState = "Storage needs attention"
-            errorMessage = "Invoke could not open its saved data. Existing files were preserved. You can restore a complete backup in Settings. Details: \(error.localizedDescription)"
-        }
+        } catch { markHistoryUnavailable(error.localizedDescription) }
     }
 
-    private func discoverRecoveryBackups() {
-        let folder = directory.appendingPathComponent("recovery", isDirectory: true)
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
-        let files = (try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys))) ?? []
-        let valid: [(URL, Date)] = files.compactMap { url in
-            guard url.pathExtension == "invoke", let info = try? url.resourceValues(forKeys: keys),
-                  info.isRegularFile == true, let size = info.fileSize, size <= BackupValidation.maximumBackupBytes,
-                  let bytes = try? Data(contentsOf: url, options: .mappedIfSafe),
-                  (try? BackupValidation.decode(bytes)) != nil else { return nil }
-            return (url, info.contentModificationDate ?? .distantPast)
-        }
-        recoveryBackupURLs = valid.sorted { $0.1 > $1.1 }.map(\.0)
-        lastRecoveryBackupURL = recoveryBackupURLs.first
+    func markHistoryUnavailable(_ detail: String) {
+        diskWritesBlocked = true
+        saveState = "Storage needs attention"
+        errorMessage = "Invoke could not open or read its saved data. Existing files were preserved. Restore a complete backup in Settings. Details: \(detail)"
     }
-
-    private func loadSnapshot(at url: URL) throws {
+    private func verifyPhotos(_ value: AppData, in folder: URL) throws {
+        for name in BackupValidation.imageNames(in: value) {
+            guard fileManager.fileExists(atPath: folder.appendingPathComponent(name).path) else { throw InvokeDataError.missingPhoto(name) }
+        }
+    }
+    private func readLegacySnapshot(at url: URL) throws -> (DiskSnapshot, Data) {
         let bytes = try Data(contentsOf: url)
         let snapshot = try PersistenceCoding.decoder().decode(DiskSnapshot.self, from: bytes)
         guard snapshot.formatVersion == 1 else { throw InvokeDataError.unsupportedVersion(snapshot.formatVersion) }
         try BackupValidation.validateRecords(snapshot.data)
-        for name in BackupValidation.imageNames(in: snapshot.data) {
-            guard fileManager.fileExists(atPath: imagesURL.appendingPathComponent(name).path) else {
-                throw InvokeDataError.missingPhoto(name)
+        try verifyPhotos(snapshot.data, in: imagesURL)
+        return (snapshot, bytes)
+    }
+    private func migrateLegacySnapshot(_ snapshot: DiskSnapshot, bytes: Data) throws {
+        var upgraded = snapshot.data; upgraded.schemaVersion = AppData.currentSchemaVersion
+        try BackupValidation.validateRecords(upgraded)
+        let original = generationURL, nextName = UUID().uuidString
+        let staged = directory.appendingPathComponent("generations", isDirectory: true).appendingPathComponent(nextName, isDirectory: true)
+        let stagedImages = staged.appendingPathComponent("images", isDirectory: true)
+        try fileManager.createDirectory(at: stagedImages, withIntermediateDirectories: true)
+        do {
+            var assets: [String: BackupAsset] = [:]
+            for name in BackupValidation.imageNames(in: snapshot.data) {
+                let image = try Data(contentsOf: original.appendingPathComponent("images").appendingPathComponent(name))
+                try writeProtected(image, to: stagedImages.appendingPathComponent(name)); assets[name] = BackupAsset(bytes: image)
             }
+            let label = snapshot.data.schemaVersion == 1 ? "Before-2.0" : "Before-paged-history"
+            _ = try retainRecoveryBackup(BackupPayload(data: snapshot.data, images: assets), label: label)
+            let raw = staged.appendingPathComponent("legacy-schema-\(snapshot.data.schemaVersion).json")
+            try writeProtected(bytes, to: raw)
+            guard try Data(contentsOf: raw) == bytes else { throw InvokeDataError.invalidBackup("Original snapshot verification failed.") }
+            let repository = try SQLiteHistoryRepository(url: staged.appendingPathComponent("history.sqlite"), create: true)
+            try repository.seed(upgraded)
+            let core = try repository.loadCore(); try repository.validateCore(core)
+            let totals = try repository.counts()
+            guard totals.actions == upgraded.grimoire.actions.count, totals.occurrences == upgraded.grimoire.occurrences.count,
+                  totals.revisions == upgraded.grimoire.revisions.count else { throw InvokeDataError.invalidBackup("History migration verification failed.") }
+            // Only the pointer commits the staged generation; the original files remain unchanged.
+            try writeProtected(Data(nextName.utf8), to: pointerURL)
+            generationName = nextName; historyRepository = repository
+            suppressAutosave = true; data = core; suppressAutosave = false
+        } catch { try? fileManager.removeItem(at: staged); throw error }
+    }
+
+    private struct RecoveryReference: Codable {
+        var name: String; var size: Int; var modified: Double; var created: Date
+    }
+    private var recoveryDirectory: URL { directory.appendingPathComponent("recovery", isDirectory: true) }
+    private var recoveryIndexURL: URL { recoveryDirectory.appendingPathComponent("index.json") }
+    private func recoveryReferences() -> [RecoveryReference] {
+        guard let bytes = try? Data(contentsOf: recoveryIndexURL) else { return [] }
+        return (try? PersistenceCoding.decoder().decode([RecoveryReference].self, from: bytes)) ?? []
+    }
+    private func discoverRecoveryBackups() {
+        // Only the compact manifest and file attributes are read at ordinary startup.
+        // Every selected restore is validated again before it can replace anything.
+        recoveryBackupURLs = recoveryReferences().sorted { $0.created > $1.created }.compactMap { entry in
+            guard entry.name == URL(fileURLWithPath: entry.name).lastPathComponent, entry.name.hasSuffix(".invoke") else { return nil }
+            let url = recoveryDirectory.appendingPathComponent(entry.name)
+            guard let info = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
+                  info.isRegularFile == true, info.fileSize == entry.size,
+                  let modified = info.contentModificationDate, abs(modified.timeIntervalSince1970 - entry.modified) < 0.01 else { return nil }
+            return url
         }
-        if snapshot.data.schemaVersion == 1 {
-            // Preserve the complete original generation, including fields this version
-            // does not understand, before committing an additive upgrade.
-            var upgraded = snapshot.data
-            upgraded.schemaVersion = AppData.currentSchemaVersion
-            try BackupValidation.validateRecords(upgraded)
-            let oldGeneration = generationURL
-            let nextName = UUID().uuidString
-            let staged = directory.appendingPathComponent("generations", isDirectory: true).appendingPathComponent(nextName, isDirectory: true)
-            try fileManager.createDirectory(at: staged, withIntermediateDirectories: true)
-            do {
-                let stagedImages = staged.appendingPathComponent("images", isDirectory: true)
-                try fileManager.createDirectory(at: stagedImages, withIntermediateDirectories: true)
-                var assets: [String: BackupAsset] = [:]
-                for name in BackupValidation.imageNames(in: snapshot.data) {
-                    let imageBytes = try Data(contentsOf: oldGeneration.appendingPathComponent("images").appendingPathComponent(name))
-                    try writeProtected(imageBytes, to: stagedImages.appendingPathComponent(name))
-                    assets[name] = BackupAsset(bytes: imageBytes)
-                }
-                let recovery = directory.appendingPathComponent("recovery", isDirectory: true)
-                try fileManager.createDirectory(at: recovery, withIntermediateDirectories: true)
-                let recoveryURL = recovery.appendingPathComponent("Before-2.0-\(nextName).invoke")
-                try writeProtected(try PersistenceCoding.encoder().encode(BackupPayload(data: snapshot.data, images: assets)), to: recoveryURL)
-                try writeProtected(bytes, to: staged.appendingPathComponent("legacy-schema-1.json"))
-                let upgradedBytes = try PersistenceCoding.encoder().encode(DiskSnapshot(data: upgraded))
-                try writeProtected(upgradedBytes, to: staged.appendingPathComponent("data.json"))
-                let verified = try PersistenceCoding.decoder().decode(DiskSnapshot.self, from: Data(contentsOf: staged.appendingPathComponent("data.json")))
-                try BackupValidation.validateRecords(verified.data)
-                guard try Data(contentsOf: staged.appendingPathComponent("data.json")) == upgradedBytes else { throw InvokeDataError.invalidBackup("Upgrade verification failed.") }
-                // Only this atomic pointer change commits the migration. Old storage is retained.
-                try writeProtected(Data(nextName.utf8), to: pointerURL)
-                generationName = nextName
-                lastRecoveryBackupURL = recoveryURL
-                suppressAutosave = true; data = upgraded; suppressAutosave = false
-                lastSnapshotBytes = upgradedBytes
-            } catch {
-                try? fileManager.removeItem(at: staged)
-                throw error
-            }
-        } else {
-            suppressAutosave = true
-            data = snapshot.data
-            suppressAutosave = false
-            lastSnapshotBytes = bytes
+        lastRecoveryBackupURL = recoveryBackupURLs.first
+    }
+    /// An explicit user-requested check may read older, unindexed recovery files.
+    func refreshRecoveryBackups() throws {
+        try fileManager.createDirectory(at: recoveryDirectory, withIntermediateDirectories: true)
+        let files = try fileManager.contentsOfDirectory(at: recoveryDirectory, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey])
+        var valid: [RecoveryReference] = []
+        for url in files where url.pathExtension == "invoke" {
+            let info = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey])
+            guard info.isRegularFile == true, let size = info.fileSize, size <= BackupValidation.maximumBackupBytes else { continue }
+            guard (try? BackupValidation.decode(Data(contentsOf: url, options: .mappedIfSafe))) != nil else { continue }
+            let modified = info.contentModificationDate ?? Date()
+            valid.append(RecoveryReference(name: url.lastPathComponent, size: size, modified: modified.timeIntervalSince1970, created: modified))
         }
+        try writeProtected(try PersistenceCoding.encoder().encode(valid), to: recoveryIndexURL)
+        discoverRecoveryBackups()
+    }
+    private func retainRecoveryBackup(_ payload: BackupPayload, label: String) throws -> URL {
+        try BackupValidation.validate(payload)
+        try fileManager.createDirectory(at: recoveryDirectory, withIntermediateDirectories: true)
+        // Bring existing pre-manifest copies forward once, during an explicit migration/restore.
+        if !fileManager.fileExists(atPath: recoveryIndexURL.path) { try refreshRecoveryBackups() }
+        let url = recoveryDirectory.appendingPathComponent("\(label)-\(UUID().uuidString).invoke")
+        let bytes = try PersistenceCoding.encoder().encode(payload)
+        guard bytes.count <= BackupValidation.maximumBackupBytes else { throw InvokeDataError.invalidBackup("The recovery copy exceeds the portable backup limit.") }
+        try writeProtected(bytes, to: url)
+        let info = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        var entries = recoveryReferences()
+        entries.append(RecoveryReference(name: url.lastPathComponent, size: info.fileSize ?? bytes.count,
+            modified: (info.contentModificationDate ?? Date()).timeIntervalSince1970, created: Date()))
+        try writeProtected(try PersistenceCoding.encoder().encode(entries), to: recoveryIndexURL)
+        discoverRecoveryBackups()
+        return url
     }
 
     private func scheduleSave() {
@@ -200,25 +234,21 @@ final class AppStore: ObservableObject {
     /// New discrete actions publish success only after the durable atomic write.
     /// The legacy prose autosave still retains its draft when this throws.
     func commitSnapshot(_ candidate: AppData) throws {
-        guard !diskWritesBlocked else {
+        guard !diskWritesBlocked, let repository = historyRepository else {
             throw InvokeDataError.storageUnavailable("Existing files need recovery in Settings before autosaving can resume.")
         }
+        guard candidate.schemaVersion == AppData.currentSchemaVersion else { throw InvokeDataError.unsupportedVersion(candidate.schemaVersion) }
         var next = candidate
-        next.schemaVersion = AppData.currentSchemaVersion
-        try BackupValidation.validateRecords(next)
         Self.stampChanges(in: &next, comparedWith: lastPersisted)
-        for name in BackupValidation.imageNames(in: next) {
-            guard fileManager.fileExists(atPath: imagesURL.appendingPathComponent(name).path) else { throw InvokeDataError.missingPhoto(name) }
-        }
-        let bytes = try PersistenceCoding.encoder().encode(DiskSnapshot(data: next))
-        if let previous = lastSnapshotBytes { try writeProtected(previous, to: generationURL.appendingPathComponent("previous.json")) }
-        try writeProtected(bytes, to: generationURL.appendingPathComponent("data.json"))
+        try verifyPhotos(next, in: imagesURL)
+        let core = try repository.commit(next)
         let previousData = lastPersisted
-        lastPersisted = next; lastSnapshotBytes = bytes
+        lastPersisted = core
         scheduledSave?.cancel(); scheduledSave = nil
-        suppressAutosave = true; data = next; suppressAutosave = false
-        pendingImportFiles.subtract(BackupValidation.imageNames(in: next))
-        removeUnusedPhotos(keeping: BackupValidation.imageNames(in: next)
+        suppressAutosave = true; data = core; suppressAutosave = false
+        grimoireQueryCache.invalidate(); historyRevision &+= 1
+        pendingImportFiles.subtract(BackupValidation.imageNames(in: core))
+        removeUnusedPhotos(keeping: BackupValidation.imageNames(in: core)
             .union(BackupValidation.imageNames(in: previousData)).union(pendingImportFiles))
         saveState = "Saved on this iPhone"
     }
@@ -273,7 +303,7 @@ final class AppStore: ObservableObject {
             guard let url = imageURL(name) else { throw InvokeDataError.missingPhoto(name) }
             assets[name] = BackupAsset(bytes: try Data(contentsOf: url))
         }
-        let payload = BackupPayload(data: data, images: assets)
+        let payload = BackupPayload(data: try exportFullData(), images: assets)
         try BackupValidation.validate(payload)
         let encodedSize = try PersistenceCoding.encoder().encode(payload).count
         guard encodedSize <= BackupValidation.maximumBackupBytes else {
@@ -291,48 +321,29 @@ final class AppStore: ObservableObject {
     /// switch a tiny pointer. Any validation or write failure leaves the old generation active.
     func restore(_ payload: BackupPayload) throws {
         try BackupValidation.validate(payload)
-        var restoredData = payload.data
-        restoredData.schemaVersion = AppData.currentSchemaVersion
+        var restoredData = payload.data; restoredData.schemaVersion = AppData.currentSchemaVersion
         try BackupValidation.validateRecords(restoredData)
         let nextName = UUID().uuidString
-        let nextDirectory = directory.appendingPathComponent("generations", isDirectory: true)
-            .appendingPathComponent(nextName, isDirectory: true)
+        let nextDirectory = directory.appendingPathComponent("generations", isDirectory: true).appendingPathComponent(nextName, isDirectory: true)
         let nextImages = nextDirectory.appendingPathComponent("images", isDirectory: true)
-        let recoveryDirectory = directory.appendingPathComponent("recovery", isDirectory: true)
         try fileManager.createDirectory(at: nextImages, withIntermediateDirectories: true)
         do {
             for (name, asset) in payload.images { try writeProtected(asset.bytes, to: nextImages.appendingPathComponent(name)) }
-            let bytes = try PersistenceCoding.encoder().encode(DiskSnapshot(data: restoredData))
-            try writeProtected(bytes, to: nextDirectory.appendingPathComponent("data.json"))
-            try fileManager.createDirectory(at: recoveryDirectory, withIntermediateDirectories: true)
-            let recoveryURL = recoveryDirectory.appendingPathComponent("Before-restore-\(UUID().uuidString).invoke")
-            if !diskWritesBlocked {
-                let previous = try makeBackup()
-                try writeProtected(try PersistenceCoding.encoder().encode(previous.payload), to: recoveryURL)
-            }
-            // The only commit point. The prior generation remains available on disk.
+            let repository = try SQLiteHistoryRepository(url: nextDirectory.appendingPathComponent("history.sqlite"), create: true)
+            try repository.seed(restoredData)
+            let core = try repository.loadCore(); try repository.validateCore(core)
+            if !diskWritesBlocked { _ = try retainRecoveryBackup(makeBackup().payload, label: "Before-restore") }
+            // Core and ledger are complete before the sole generation commit point.
             try writeProtected(Data(nextName.utf8), to: pointerURL)
-            scheduledSave?.cancel()
-            scheduledSave = nil
-            generationName = nextName
-            lastSnapshotBytes = bytes
-            lastPersisted = restoredData
-            pendingImportFiles = []
-            suppressAutosave = true
-            data = restoredData
-            suppressAutosave = false
-            if !diskWritesBlocked {
-                recoveryBackupURLs = [recoveryURL] + recoveryBackupURLs.filter { $0 != recoveryURL }
-                lastRecoveryBackupURL = recoveryURL
-            }
+            scheduledSave?.cancel(); scheduledSave = nil
+            generationName = nextName; historyRepository = repository
+            lastPersisted = core; pendingImportFiles = []
+            suppressAutosave = true; data = core; suppressAutosave = false
+            grimoireQueryCache.invalidate(); historyRevision &+= 1
             diskWritesBlocked = false
             saveState = "Restored and saved on this iPhone"
             errorMessage = nil
-        } catch {
-            // The stage is uniquely owned by this attempt and cannot be the active generation.
-            try? fileManager.removeItem(at: nextDirectory)
-            throw error
-        }
+        } catch { try? fileManager.removeItem(at: nextDirectory); throw error }
     }
 
     func deleteEntry(id: UUID) {

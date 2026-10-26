@@ -32,7 +32,7 @@ final class GrimoireStoreTests: XCTestCase {
         XCTAssertEqual(reopened.sessionCount(for: row), 1); XCTAssertEqual(reopened.data.grimoire.practices[0].invocationID, goal.id)
         try reopened.undoAction(action.id, now: date("2024-01-02T13:00:00Z"))
         XCTAssertEqual(reopened.sessionCount(for: row), 0)
-        XCTAssertEqual(reopened.data.grimoire.actions.filter { $0.kind == .correction }.count, 1)
+        XCTAssertEqual(try reopened.historyPage(includeRevisions: false, actionKinds: [.correction]).actions.count, 1)
         XCTAssertEqual(AppStore(directory: s.directory).sessionCount(for: row), 0)
     }
     @MainActor func testRetryDoubleTapAndReopenCannotDuplicateOneCompletion() throws {
@@ -93,11 +93,11 @@ final class GrimoireStoreTests: XCTestCase {
         let s = store(); var p = practice(); p.schedule.hardDeadline = true; p.schedule.deadlineHour = 17
         let row = try occurrence(s, practice: p), later = date("2024-01-03T12:00:00Z")
         try s.snoozeReminder(row.id, until: later); try s.deferOccurrence(row.id, to: later, now: date())
-        XCTAssertEqual(s.data.grimoire.occurrences[0].hardDeadline, row.hardDeadline)
-        let action = try XCTUnwrap(s.data.grimoire.actions.last)
+        XCTAssertEqual(s.occurrence(id: row.id)?.hardDeadline, row.hardDeadline)
+        let action = try XCTUnwrap(s.activeActions(for: row.id).last)
         try s.undoAction(action.id, now: date())
-        XCTAssertNil(s.data.grimoire.occurrences[0].deferredUntil)
-        XCTAssertEqual(s.data.grimoire.occurrences[0].reminderSnoozedUntil, later)
+        XCTAssertNil(s.occurrence(id: row.id)?.deferredUntil)
+        XCTAssertEqual(s.occurrence(id: row.id)?.reminderSnoozedUntil, later)
     }
     @MainActor func testUndoCompletionInvalidatesDerivedFutureIntervalReminder() throws {
         let s = store(); var p = practice(.afterCompletion); p.schedule.interval = 1; p.schedule.intervalUnit = .month
@@ -105,7 +105,7 @@ final class GrimoireStoreTests: XCTestCase {
         let action = try s.recordAction(occurrenceID: row.id, kind: .complete, sessionID: session, requestID: UUID(), occurredAt: date(), now: date())
         let next = try XCTUnwrap(s.grimoireOccurrences(in: DateInterval(start: date("2024-02-01T00:00:00Z"), end: date("2024-03-01T00:00:00Z"))).first)
         try s.ensureOccurrence(next); try s.undoAction(action.id, now: date())
-        XCTAssertTrue(s.data.grimoire.occurrences.first(where: { $0.id == next.id })!.superseded)
+        XCTAssertTrue(s.occurrence(id: next.id)!.superseded)
     }
     @MainActor func testFutureRevisionRetainsOriginalCompletedTitleAndSteps() throws {
         let s = store(); var p = practice(); p.steps = [PracticeStep(title: "Original step")]
@@ -116,10 +116,10 @@ final class GrimoireStoreTests: XCTestCase {
         p.instructions = "Future instructions"; p.context = "Future trigger"; p.materials = "Future materials"; p.smallerVersion = "Future smaller version"
         try s.savePractice(p, effectiveFrom: date("2024-01-03T00:00:00Z"))
         XCTAssertEqual(s.data.grimoire.practices[0].version, 2)
-        XCTAssertEqual(s.data.grimoire.occurrences.first(where: { $0.id == row.id })?.title, "My practice")
-        XCTAssertEqual(s.data.grimoire.occurrences.first(where: { $0.id == row.id })?.steps[0].title, "Original step")
+        XCTAssertEqual(s.occurrence(id: row.id)?.title, "My practice")
+        XCTAssertEqual(s.occurrence(id: row.id)?.steps[0].title, "Original step")
         XCTAssertEqual(s.sessionCount(for: row), 1)
-        let saved = try XCTUnwrap(s.data.grimoire.occurrences.first { $0.id == row.id })
+        let saved = try XCTUnwrap(s.occurrence(id: row.id))
         XCTAssertEqual(saved.instructions, "Original instructions"); XCTAssertEqual(saved.context, "Original trigger")
         XCTAssertEqual(saved.materials, "Original materials"); XCTAssertEqual(saved.smallerVersion, "Original smaller version")
         XCTAssertEqual(s.data.grimoire.practices[0].revisions[0].context, "Original trigger")
@@ -129,10 +129,10 @@ final class GrimoireStoreTests: XCTestCase {
         let session = try s.beginSession(occurrenceID: row.id, now: date())
         _ = try s.recordAction(occurrenceID: row.id, kind: .complete, sessionID: session, requestID: UUID(), occurredAt: date(), now: date())
         try s.setPracticePaused(row.practiceID, paused: true)
-        XCTAssertEqual(s.data.grimoire.actions.count, 2)
+        XCTAssertEqual(s.historyCounts.actions, 2)
         try s.setPracticePaused(row.practiceID, paused: false); try s.archivePractice(row.practiceID)
         var v = s.data.grimoire; v.settings.restorationMode = true; try s.commitGrimoire(v)
-        XCTAssertEqual(AppStore(directory: s.directory).data.grimoire.actions.count, 2)
+        XCTAssertEqual(AppStore(directory: s.directory).historyCounts.actions, 2)
     }
     @MainActor func testServiceableAssetKeepsUnknownDatesAndDoesNotCreateReplacement() throws {
         let s = store(); let boots = CareAsset(name: "Boots")
@@ -160,14 +160,14 @@ final class GrimoireStoreTests: XCTestCase {
         try s.saveArcana(record); record.beliefStatus = "Practicing"; try s.saveArcana(record)
         let echo = Echo(title: "Two perspectives", sourceA: "Source A", sourceB: "Source B", similarities: "A perceived similarity", differences: "A meaningful difference")
         try s.saveEcho(echo)
-        XCTAssertEqual(s.data.grimoire.revisions.count, 1)
-        XCTAssertTrue(s.data.grimoire.revisions[0].summary.contains("Exploring → Practicing"))
-        let before = try PersistenceCoding.decoder().decode(ArcanaRecord.self, from: s.data.grimoire.revisions[0].before)
+        XCTAssertEqual(s.historyCounts.revisions, 1)
+        XCTAssertTrue(s.revisions(for: record.id)[0].summary.contains("Exploring → Practicing"))
+        let before = try PersistenceCoding.decoder().decode(ArcanaRecord.self, from: s.revisions(for: record.id)[0].before)
         XCTAssertEqual(before.beliefStatus, "Exploring")
         let restored = store(); try restored.restore(s.makeBackup().payload)
         XCTAssertEqual(restored.data.grimoire.echoes[0].differences, echo.differences)
         XCTAssertEqual(restored.data.grimoire.arcana[0].beliefStatus, "Practicing")
-        XCTAssertEqual(restored.data.grimoire.revisions.count, 1)
+        XCTAssertEqual(restored.historyCounts.revisions, 1)
     }
     @MainActor func testInvocationOutcomesAreIndependentAndStaleEditorPreservesObservations() throws {
         let s = store(); let original = Invocation(title: "Explore an idea"); try s.saveInvocation(original)
@@ -206,14 +206,17 @@ final class GrimoireStoreTests: XCTestCase {
         XCTAssertEqual(s.data.grimoire.spells[0].title, "Keep this")
     }
     @MainActor func testFailedAtomicActionDoesNotPublishSuccess() throws {
-        let s = store(); let row = try occurrence(s)
-        let generation = try String(contentsOf: s.directory.appendingPathComponent("CURRENT"), encoding: .utf8)
-        let file = s.directory.appendingPathComponent("generations/\(generation)/data.json")
-        try FileManager.default.moveItem(at: file, to: file.appendingPathExtension("retained"))
-        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
-        let before = s.data.grimoire.actions.count
-        XCTAssertThrowsError(try s.beginSession(occurrenceID: row.id, now: date()))
-        XCTAssertEqual(s.data.grimoire.actions.count, before)
+        let s = store(), row = try occurrence(s)
+        let session = try s.beginSession(occurrenceID: row.id, now: date())
+        let repository = try XCTUnwrap(s.historyRepository)
+        try repository.constrainStorageToCurrentSizeForTesting()
+        let before = s.historyCounts.actions, revision = s.historyRevision
+        XCTAssertThrowsError(try s.recordAction(occurrenceID: row.id, kind: .complete, sessionID: session,
+            requestID: UUID(), notes: String(repeating: "large payload ", count: 20_000), occurredAt: date(), now: date()))
+        XCTAssertEqual(s.historyCounts.actions, before); XCTAssertEqual(s.historyRevision, revision)
+        XCTAssertEqual(s.occurrenceStatus(row), .inProgress)
+        let reopened = AppStore(directory: s.directory)
+        XCTAssertFalse(reopened.storageRecoveryRequired); XCTAssertEqual(reopened.historyCounts.actions, before)
     }
     @MainActor func testRetrospectiveActionKeepsEventTimeSeparateFromRecordedTime() throws {
         let s = store(); let row = try occurrence(s), session = try s.beginSession(occurrenceID: row.id, now: date("2024-01-05T12:00:00Z"))
@@ -227,7 +230,7 @@ final class GrimoireStoreTests: XCTestCase {
         var p = practice(); p.legacyEntryID = entry.id; _ = try occurrence(s, practice: p)
         s.deleteEntry(id: entry.id)
         XCTAssertNil(s.data.grimoire.practices[0].legacyEntryID)
-        XCTAssertEqual(s.data.grimoire.occurrences.count, 1)
+        XCTAssertEqual(s.historyCounts.occurrences, 1)
         try BackupValidation.validateRecords(s.data)
     }
     @MainActor func testLargeFixtureProjectionDoesNotPersistSyntheticHistory() throws {
@@ -245,11 +248,23 @@ final class GrimoireStoreTests: XCTestCase {
             }
         }
         try s.commitGrimoire(value)
-        let rows = s.grimoireOccurrences(in: DateInterval(start: date("2026-10-26T00:00:00Z"), end: date("2026-10-27T00:00:00Z")))
-        XCTAssertEqual(rows.count, 1_000); XCTAssertEqual(s.data.grimoire.actions.count, 3_000); XCTAssertEqual(s.data.grimoire.occurrences.count, 3_000)
-        let builds = s.grimoireQueryCache.actionIndexBuilds
-        for row in rows { XCTAssertEqual(s.occurrenceStatus(row), .unrecorded); XCTAssertEqual(s.sessionCount(for: row), 0) }
-        XCTAssertEqual(s.grimoireQueryCache.actionIndexBuilds, builds, "Rendering 1,000 rows must reuse one action index")
+        let reopenStart = ProcessInfo.processInfo.systemUptime
+        let reopened = AppStore(directory: s.directory)
+        let reopenDuration = ProcessInfo.processInfo.systemUptime - reopenStart
+        let decoded = try XCTUnwrap(reopened.historyRepository).decodedHistoryRecords
+        XCTAssertEqual(decoded, 0)
+        let projectionStart = ProcessInfo.processInfo.systemUptime
+        let rows = reopened.grimoireOccurrences(in: DateInterval(start: date("2026-10-26T00:00:00Z"), end: date("2026-10-27T00:00:00Z")))
+        for row in rows { XCTAssertEqual(reopened.occurrenceStatus(row), .unrecorded); XCTAssertEqual(reopened.sessionCount(for: row), 0) }
+        let projectionDuration = ProcessInfo.processInfo.systemUptime - projectionStart
+        XCTAssertEqual(rows.count, 1_000); XCTAssertEqual(reopened.historyCounts.actions, 3_000); XCTAssertEqual(reopened.historyCounts.occurrences, 3_000)
+        XCTAssertEqual(reopened.historyRepository?.decodedHistoryRecords, decoded, "Rendering 1,000 statuses must use indexed summaries, not decode action notes")
+        let pageStart = ProcessInfo.processInfo.systemUptime
+        let page = try reopened.historyPage(limit: 50)
+        let pageDuration = ProcessInfo.processInfo.systemUptime - pageStart
+        XCTAssertEqual(page.actions.count, 50); XCTAssertNotNil(page.nextCursor)
+        print(String(format: "INVOKE_SCALE_METRICS practices=1000 actions=3000 occurrences=3000 in_process_reopen_ms=%.3f today_projection_and_1000_statuses_ms=%.3f chronicle_first_50_rows_ms=%.3f",
+            reopenDuration * 1_000, projectionDuration * 1_000, pageDuration * 1_000))
     }
     @MainActor func testReplenishmentFollowUpIsExplicitAtomicAndRetrySafe() throws {
         let s = store(), asset = CareAsset(name: "Household supply")
@@ -274,7 +289,7 @@ final class GrimoireStoreTests: XCTestCase {
         XCTAssertThrowsError(try s.savePractice(p, effectiveFrom: date("2024-01-04T00:00:00Z")))
         XCTAssertEqual(s.data.grimoire.practices[0].version, 1)
         XCTAssertEqual(s.grimoireOccurrences(in: range).map(\.id), [old.id])
-        XCTAssertFalse(s.data.grimoire.occurrences[0].superseded)
+        XCTAssertFalse(s.occurrence(id: old.id)!.superseded)
     }
     @MainActor func testWeekStartChangeKeepsEarnedQuotaUntilOriginalBoundary() throws {
         let s = store(), p = practice(.weeklyQuota)
@@ -290,10 +305,10 @@ final class GrimoireStoreTests: XCTestCase {
     }
     @MainActor func testWeekStartChangeEstablishesOldPeriodBeforeAnyAction() throws {
         let s = store(), p = practice(.weeklyQuota); try s.activatePractice(p)
-        XCTAssertTrue(s.data.grimoire.occurrences.isEmpty)
+        XCTAssertEqual(s.historyCounts.occurrences, 0)
         var changed = s.data.grimoire; changed.settings.weekStartsOn = 1
         try s.commitGrimoire(changed, now: date("2024-01-03T12:00:00Z"))
-        let current = try XCTUnwrap(s.data.grimoire.occurrences.first)
+        let current = try XCTUnwrap(s.exportFullData().grimoire.occurrences.first)
         XCTAssertEqual(current.windowStart, LocalDay(year: 2024, month: 1, day: 1))
         let rows = s.grimoireOccurrences(in: DateInterval(start: date("2024-01-03T00:00:00Z"), end: date("2024-01-04T00:00:00Z")))
         XCTAssertEqual(rows.map(\.id), [current.id]); XCTAssertEqual(s.sessionCount(for: current), 0)
@@ -302,11 +317,11 @@ final class GrimoireStoreTests: XCTestCase {
         let s = store(), row = try occurrence(s)
         let action = try s.recordAction(occurrenceID: row.id, kind: .complete, sessionID: UUID(), requestID: UUID(), occurredAt: date(), now: date())
         XCTAssertEqual(s.occurrenceStatus(row), .completed)
-        let before = s.grimoireQueryCache.actionIndexBuilds
-        XCTAssertEqual(s.sessionCount(for: row), 1); XCTAssertEqual(s.grimoireQueryCache.actionIndexBuilds, before)
+        let before = s.historyRevision
+        XCTAssertEqual(s.sessionCount(for: row), 1); XCTAssertEqual(s.historyRevision, before)
         try s.undoAction(action.id, now: date())
         XCTAssertEqual(s.occurrenceStatus(row), .unrecorded); XCTAssertEqual(s.sessionCount(for: row), 0)
-        XCTAssertEqual(s.grimoireQueryCache.actionIndexBuilds, before + 1)
+        XCTAssertEqual(s.historyRevision, before + 1)
         XCTAssertEqual(AppStore(directory: s.directory).sessionCount(for: row), 0)
     }
     @MainActor func testProjectionOverflowIsDisclosedAndCannotSilentlyMaterializePartialHistory() throws {
@@ -316,7 +331,7 @@ final class GrimoireStoreTests: XCTestCase {
         let range = DateInterval(start: date("2024-01-01T00:00:00Z"), end: date("2024-01-02T00:00:00Z"))
         let report = s.grimoireProjection(in: range)
         XCTAssertTrue(report.truncated); XCTAssertFalse(report.warnings.isEmpty); XCTAssertEqual(report.occurrences.count, 20_000)
-        XCTAssertThrowsError(try s.materializeOccurrences(in: range)); XCTAssertTrue(s.data.grimoire.occurrences.isEmpty)
+        XCTAssertThrowsError(try s.materializeOccurrences(in: range)); XCTAssertEqual(s.historyCounts.occurrences, 0)
     }
     @MainActor func testSpecialtySavesKeepCreationAdvanceUpdatedAndNormalizeInvocationArchive() throws {
         let s = store(), original = date("2020-01-01T00:00:00Z")

@@ -5,7 +5,7 @@ import SwiftUI
 struct ConstellationZoomSource: ViewModifier {
     let id: String
     let namespace: Namespace.ID
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @InvokeReducedMotion private var reduceMotion
 
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 18.0, *), !reduceMotion {
@@ -19,7 +19,7 @@ struct ConstellationZoomSource: ViewModifier {
 struct ConstellationZoomDestination: ViewModifier {
     let id: String
     let namespace: Namespace.ID
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @InvokeReducedMotion private var reduceMotion
 
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 18.0, *), !reduceMotion {

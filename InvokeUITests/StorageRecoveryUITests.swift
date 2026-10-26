@@ -4,18 +4,18 @@ final class StorageRecoveryUITests: XCTestCase {
     private func element(_ identifier: String, app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
-    private func reveal(_ target: XCUIElement, app: XCUIApplication) {
+    private func reveal(_ target: XCUIElement, app: XCUIApplication, upwards: Bool = true) {
         _ = target.waitForExistence(timeout: 3)
         for _ in 0..<8 {
             if target.isHittable { return }
-            app.swipeUp()
+            if upwards { app.swipeUp() } else { app.swipeDown() }
         }
         XCTAssertTrue(target.isHittable)
     }
     private func dismissStartupError(_ app: XCUIApplication) {
         if app.alerts.firstMatch.waitForExistence(timeout: 4) { app.alerts.buttons["OK"].tap() }
     }
-    func testCorruptStorageOpensRecoveryAndNeverExportsEmptyDefaults() {
+    func testCorruptStorageFailsClosedThenRestoresRetainedBackup() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--ui-testing", "--ui-testing-session=\(UUID().uuidString)", "--ui-testing-fixture=corrupt-storage"]
@@ -40,5 +40,29 @@ final class StorageRecoveryUITests: XCTestCase {
         dismissStartupError(app)
         XCTAssertTrue(element("storage-recovery", app: app).waitForExistence(timeout: 10), "Opening recovery settings must not overwrite the damaged generation.")
         XCTAssertFalse(element("onboarding-skip", app: app).exists)
+
+        let reopenRecovery = element("storage-open-recovery", app: app)
+        reveal(reopenRecovery, app: app); reopenRecovery.tap()
+        let findCopies = app.buttons["Find retained recovery copies"]
+        reveal(findCopies, app: app); findCopies.tap()
+        let review = element("recovery-review-copy", app: app)
+        reveal(review, app: app, upwards: false); review.tap()
+        let merge = app.buttons["Merge new records into my collection"]
+        XCTAssertTrue(merge.waitForExistence(timeout: 10))
+        XCTAssertFalse(merge.isEnabled, "Merging cannot read from a damaged collection.")
+        let replace = app.buttons["Replace with this backup"]
+        reveal(replace, app: app); replace.tap()
+        let confirm = app.alerts.buttons["Replace & restore"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.tap()
+        XCTAssertTrue(element("today-add-quest", app: app).waitForExistence(timeout: 10))
+        let recovered = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "quest-row-", "Test recovered practice")).firstMatch
+        reveal(recovered, app: app)
+        let restoredImage = XCTAttachment(screenshot: app.screenshot())
+        restoredImage.name = "33-Restored-collection"; restoredImage.lifetime = .keepAlways; add(restoredImage)
+        app.terminate(); app.launch()
+        XCTAssertTrue(element("today-add-quest", app: app).waitForExistence(timeout: 10))
+        XCTAssertFalse(element("storage-recovery", app: app).exists)
+        XCTAssertFalse(element("onboarding-skip", app: app).exists)
+        XCTAssertTrue(recovered.waitForExistence(timeout: 5), "The restored practice must remain after reopening.")
     }
 }

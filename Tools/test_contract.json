@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "minimumUnitTests": 113,
+  "minimumUnitTests": 130,
   "minimumUITests": 9,
   "requiredScreenshots": [
     "01-Astral-onboarding",
@@ -19,6 +19,7 @@
     "31-Today-small-ink",
     "31-Today-small-velvet",
     "31-Today-small-astral",
-    "32-Corrupt-storage-recovery"
+    "32-Corrupt-storage-recovery",
+    "33-Restored-collection"
   ]
 }

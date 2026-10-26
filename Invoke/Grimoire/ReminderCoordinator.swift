@@ -18,20 +18,27 @@ enum ReminderPlanner {
     static let maximumRequests = 48
     static let horizonDays = 30
 
+    static func window(settings: GrimoireSettings, now: Date, currentZone: TimeZone = .current) -> DateInterval? {
+        let zone = settings.followsTravelTimeZone ? currentZone : (TimeZone(identifier: settings.homeTimeZoneID) ?? currentZone)
+        let calendar = ScheduleEngine.calendar(zone: zone, weekStart: settings.weekStartsOn)
+        guard let end = calendar.date(byAdding: .day, value: horizonDays, to: now) else { return nil }
+        return DateInterval(start: calendar.startOfDay(for: now), end: end)
+    }
+
     static func plan(data: GrimoireData, namespace: String, now: Date,
-                     currentZone: TimeZone = .current) -> [PlannedReminder] {
+                     currentZone: TimeZone = .current, projectSchedules: Bool = true) -> [PlannedReminder] {
         let settings = data.settings
         guard settings.remindersEnabled else { return [] }
         let zone = settings.followsTravelTimeZone ? currentZone : (TimeZone(identifier: settings.homeTimeZoneID) ?? currentZone)
         let calendar = ScheduleEngine.calendar(zone: zone, weekStart: settings.weekStartsOn)
-        guard let end = calendar.date(byAdding: .day, value: horizonDays, to: now) else { return [] }
-        let range = DateInterval(start: calendar.startOfDay(for: now), end: end)
+        guard let range = window(settings: settings, now: now, currentZone: currentZone) else { return [] }
+        let end = range.end
         let practices = Dictionary(uniqueKeysWithValues: data.practices.map { ($0.id, $0) })
         let activeActions = ScheduleEngine.activeActions(data.actions)
         let byPractice = Dictionary(grouping: activeActions, by: \.practiceID)
         let byOccurrence = Dictionary(grouping: activeActions, by: \.occurrenceID)
         var occurrences: [String: PracticeOccurrence] = [:]
-        for practice in data.practices where !practice.archived && !practice.paused && practice.schedule.reminderHour != nil {
+        for practice in data.practices where projectSchedules && !practice.archived && !practice.paused && practice.schedule.reminderHour != nil {
             for occurrence in ScheduleEngine.occurrences(for: practice, in: range, settings: settings,
                 actions: byPractice[practice.id] ?? [], events: data.events, currentZone: currentZone, limit: 500) {
                 occurrences[occurrence.id] = occurrence
@@ -123,6 +130,7 @@ private final class SystemNotificationGateway: NotificationGateway {
         if let id = reminder.occurrenceID { content.userInfo = ["invokeOccurrenceID": id] }
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
         var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: reminder.fireDate)
+        components.calendar = calendar
         components.timeZone = calendar.timeZone
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         try await center.add(UNNotificationRequest(identifier: reminder.id, content: content, trigger: trigger))
@@ -169,7 +177,25 @@ final class ReminderCoordinator: ObservableObject {
             statusMessage = "Save changes successfully before updating device reminders. Existing reminders have been retained."
             return
         }
-        requested = (store.data.grimoire, store.directory)
+        do {
+            var projection = GrimoireData()
+            projection.settings = store.data.grimoire.settings
+            // Disabled reminders need no ledger read, only cancellation of this
+            // installation's previous requests. Enabled reminders query a bounded
+            // repository projection, never hydrate the entire action history.
+            if projection.settings.remindersEnabled {
+                let now = Date()
+                guard let range = ReminderPlanner.window(settings: projection.settings, now: now) else {
+                    statusMessage = "The reminder calendar could not be resolved. Existing reminders have been retained."
+                    return
+                }
+                projection = try store.reminderProjectionData(in: range, now: now)
+            }
+            requested = (projection, store.directory)
+        } catch {
+            statusMessage = "Reminder history could not be read. Existing device reminders have been retained. \(error.localizedDescription)"
+            return
+        }
         guard worker == nil else { return }
         // Serialize reconciliation so an older async add cannot outlive a newer cancellation.
         worker = Task { [weak self] in
@@ -177,12 +203,12 @@ final class ReminderCoordinator: ObservableObject {
             guard let self else { return }
             while let (data, directory) = requested {
                 requested = nil
-                await reconcile(data: data, directory: directory)
+                await reconcile(data: data, directory: directory, projectSchedules: false)
             }
             worker = nil
         }
     }
-    func reconcile(data: GrimoireData, directory: URL, now: Date = Date()) async {
+    func reconcile(data: GrimoireData, directory: URL, now: Date = Date(), projectSchedules: Bool = true) async {
         do {
             let prefix = try installationNamespace(directory: directory)
             authorization = await gateway.settings()
@@ -190,7 +216,7 @@ final class ReminderCoordinator: ObservableObject {
             let pending = allPending.filter { $0.hasPrefix(prefix) }
             let foreignCount = allPending.count - pending.count
             let allowed = authorization == .authorized || authorization == .provisional || authorization == .ephemeral
-            let candidates = allowed ? ReminderPlanner.plan(data: data, namespace: prefix, now: now) : []
+            let candidates = allowed ? ReminderPlanner.plan(data: data, namespace: prefix, now: now, projectSchedules: projectSchedules) : []
             // LiveContainer may share its notification host with other guests.
             // Budget conservatively against existing foreign requests instead
             // of filling a separate 48-request queue and displacing them.
