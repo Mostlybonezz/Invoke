@@ -58,7 +58,7 @@ struct InvokeRootView: View {
         }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if store.saveState != "Saved on this iPhone" {
+            if !store.storageRecoveryRequired && store.saveState != "Saved on this iPhone" {
                 HStack(spacing: 8) { Image(systemName: store.errorMessage == nil ? "arrow.triangle.2.circlepath" : "exclamationmark.triangle"); Text(store.saveState).font(.caption); if store.errorMessage != nil { Button("Retry saving") { store.flush() }.font(.caption) } }.padding(8).frame(maxWidth: .infinity).foregroundStyle(theme.text).background(theme.surface)
             }
         }
