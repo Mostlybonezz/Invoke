@@ -2,18 +2,18 @@ name: Build Invoke IPA
 
 on:
   push:
-    branches: [main]
+    branches: [main, invoke-2.0-living-grimoire]
     tags: ['v*']
   workflow_dispatch:
     inputs:
       publish_release:
         description: Publish the tested IPA and sideload source as a GitHub release
         type: boolean
-        default: true
+        default: false
       release_tag:
         description: New release tag (vMAJOR.MINOR.PATCH)
         type: string
-        default: v1.1.0
+        default: v2.0.0
 
 permissions:
   contents: read
@@ -171,7 +171,7 @@ jobs:
     needs: source
     # GitHub's public-preview image includes exact Xcode 27.0 and iOS 27.0.
     runs-on: xcode-27
-    timeout-minutes: 45
+    timeout-minutes: 55
     outputs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
@@ -184,7 +184,7 @@ jobs:
         env:
           INPUT_TAG: ${{ inputs.release_tag }}
         run: |
-          tag="${INPUT_TAG:-v1.1.0}"
+          tag="${INPUT_TAG:-v2.0.0}"
           if [[ "$GITHUB_REF_TYPE" = tag ]]; then tag="$GITHUB_REF_NAME"; fi
           if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo 'Release tag must be vMAJOR.MINOR.PATCH.' >&2
@@ -206,6 +206,7 @@ jobs:
         run: |
           plutil -lint Invoke.xcodeproj/project.pbxproj
           python3 Tools/check_source.py
+          python3 -m unittest discover -s Tools/tests -v
       - name: Run XCTest and native launch on iOS 27.0
         run: bash Tools/test_ios.sh
       - name: Export native UI screenshots and test summary
@@ -240,6 +241,7 @@ jobs:
             build/toolchain.json
             build/simulator-info.json
             build/test-summary.json
+            build/validation-evidence.json
             build/ui-screenshots
             build/Invoke-first-launch.png
             build/TestResults.xcresult
@@ -271,13 +273,13 @@ jobs:
             exit 1
           fi
           cat > release-notes.md <<'NOTES'
-          Invoke is a native iPhone app for stories, beliefs, manifestations, rituals, and personal relics.
+          Invoke 2.0 — The Living Grimoire is a native, offline iPhone app for intentions, practical quests, rituals, reflection, and personal maintenance.
 
-          New in 1.1.0: zoom from Sanctuary into your constellation, then open any labeled scene-star to read and edit its script. Explore all chapters through the map or scene list. Astral Theatre is the default for new installs, with an indigo and orange icon. Appearance settings now include native Liquid Glass, tinted or solid surfaces, and configurable Ripples, Beam, and Sparkle effects with intensity and speed controls. Existing writing and saved theme choices are preserved.
+          The five main areas are Today, Quests, Grimoire, Invocations, and Chronicle. The update adds configurable Codex practices, calendar-aware schedules and quotas, a resumable ritual runner, linked goals and history, asset care, Spells, Enchantments, and Arcana records. Existing stories, scene constellations, beliefs, rituals, relics, photographs, and appearance choices are preserved. See the repository's `docs/invoke-v2` directory for exact coverage, migration/recovery behavior, and verification evidence.
 
           Download **Invoke.ipa** in Safari and import it from Files using LiveContainer's app import button. Requires iOS 17 or later and a separately installed, working LiveContainer. This IPA has a local ad-hoc signature; it is not Apple-provisioned for direct installation from Safari. Other sideloading tools must apply their own signing.
 
-          Built with Xcode 27.0 and the iOS 27.0 SDK. The source at this release passed the included XCTest suite and native launch on an iOS 27.0 iPhone simulator, the arm64 iOS Release build, and IPA structure/signature checks in GitHub Actions. The app still supports iOS 17 and later. Physical iPhone and LiveContainer runtime validation remain to be completed on your device. Export backups before replacing an installation.
+          Built with Xcode 27.0 and the iOS 27.0 SDK. This release requires every authored XCTest to pass without failures or skips on an iOS 27.0 simulator, retained screenshots from every UI flow, an arm64 device Release build, and IPA structure/signature checks. The app still supports iOS 17 and later. Physical iPhone and LiveContainer runtime validation are separate from simulator testing; consult the recorded evidence. Export an Invoke backup and preserve the existing LiveContainer data container when updating. Local notifications depend on device permission and may need LiveContainer's Fix Local Notifications option; core planning and in-app reminders work without notification permission.
 
           See **docs/LIVECONTAINER.md** in the repository for installation and the optional AltStore/SideStore source. **build-info.json** records the source commit, actual compiler/SDK, tested simulator OS/device, minimum supported OS, version, and checksum. **Invoke.ipa.sha256** can be used to verify the download.
           NOTES
