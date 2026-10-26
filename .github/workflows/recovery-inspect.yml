@@ -28,16 +28,16 @@ jobs:
           manifest = json.loads(manifests[0].read_text())
           chosen = [t for t in manifest if 'StorageRecoveryUITests/' in t.get('testIdentifier', '')]
           assert chosen, 'No recovery test screenshot entries'
-          with zipfile.ZipFile('invoke-recovery-review.zip', 'w', zipfile.ZIP_DEFLATED) as out:
+          with zipfile.ZipFile('invoke-recovery-details.zip', 'w', zipfile.ZIP_DEFLATED) as out:
               out.writestr('manifest.json', json.dumps(chosen, indent=2))
               for test in chosen:
                   for item in test.get('attachments', []):
                       name = item.get('exportedFileName', '')
-                      if name.endswith('.png') and pathlib.Path(name).name == name and (folder / name).is_file():
+                      if name.endswith(('.png', '.txt')) and pathlib.Path(name).name == name and (folder / name).is_file():
                           out.write(folder / name, name)
           PY
       - name: Attach synthetic review evidence
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload v2.0.0 invoke-recovery-review.zip
+        run: gh release upload v2.0.0 invoke-recovery-details.zip
