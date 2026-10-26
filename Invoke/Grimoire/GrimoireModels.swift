@@ -103,6 +103,9 @@ struct PracticeRevision: Identifiable, Codable, Equatable {
     var effectiveFrom = Date()
     var title = ""
     var instructions = ""
+    var context = ""
+    var materials = ""
+    var smallerVersion = ""
     var steps: [PracticeStep] = []
     var schedule = ScheduleRule()
 }
@@ -161,6 +164,10 @@ struct PracticeOccurrence: Identifiable, Codable, Equatable {
     var reminderSnoozedUntil: Date? = nil
     var superseded = false
     var eventID: UUID? = nil
+    var instructions = ""
+    var context = ""
+    var materials = ""
+    var smallerVersion = ""
 }
 enum ActionKind: String, Codable, CaseIterable, Identifiable {
     case begin, progress, complete, smaller, skip, deferAction, correction, observation

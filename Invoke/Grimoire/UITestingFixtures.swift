@@ -3,6 +3,20 @@ import SwiftUI
 #if DEBUG
 @MainActor
 extension AppStore {
+    static func prepareLivingGrimoireUITestStorage(at directory: URL) throws {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("--ui-testing"), arguments.contains("--ui-testing-fixture=corrupt-storage"),
+              directory.lastPathComponent.hasPrefix("InvokeUITests-"),
+              UUID(uuidString: String(directory.lastPathComponent.dropFirst("InvokeUITests-".count))) != nil else { return }
+        let pointer = directory.appendingPathComponent("CURRENT")
+        guard !FileManager.default.fileExists(atPath: pointer.path) else { return }
+        let name = UUID().uuidString
+        let generation = directory.appendingPathComponent("generations").appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: generation.appendingPathComponent("images"), withIntermediateDirectories: true)
+        try Data("invoke-ui-recovery-sentinel".utf8).write(to: generation.appendingPathComponent("data.json"), options: .atomic)
+        try Data(name.utf8).write(to: pointer, options: .atomic)
+    }
+
     /// Synthetic records used only in an explicitly isolated UI-test session.
     func installLivingGrimoireUITestFixtureIfRequested() {
         let arguments = ProcessInfo.processInfo.arguments

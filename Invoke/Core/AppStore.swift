@@ -15,7 +15,9 @@ private struct DiskSnapshot: Codable {
 final class AppStore: ObservableObject {
     @Published var data: AppData {
         didSet {
-            guard !suppressAutosave, data != oldValue else { return }
+            guard data != oldValue else { return }
+            grimoireQueryCache.invalidate()
+            guard !suppressAutosave else { return }
             saveState = "Saving…"
             scheduleSave()
         }
@@ -23,12 +25,15 @@ final class AppStore: ObservableObject {
     @Published private(set) var saveState = "Saved on this iPhone"
     @Published var errorMessage: String? = nil
     @Published private(set) var lastRecoveryBackupURL: URL? = nil
+    @Published private(set) var recoveryBackupURLs: [URL] = []
 
     let directory: URL
     private var generationName: String
     private var scheduledSave: Task<Void, Never>?
     private var suppressAutosave = false
     private var diskWritesBlocked = false
+    var storageRecoveryRequired: Bool { diskWritesBlocked }
+    let grimoireQueryCache = GrimoireQueryCache()
     private var lastPersisted: AppData
     private var lastSnapshotBytes: Data?
     private var pendingImportFiles: Set<String> = []
@@ -49,6 +54,7 @@ final class AppStore: ObservableObject {
         let initial = AppData()
         self.data = initial
         self.lastPersisted = initial
+        defer { discoverRecoveryBackups() }
         do {
             try fileManager.createDirectory(at: self.directory, withIntermediateDirectories: true)
             if fileManager.fileExists(atPath: pointerURL.path) {
@@ -91,6 +97,21 @@ final class AppStore: ObservableObject {
             saveState = "Storage needs attention"
             errorMessage = "Invoke could not open its saved data. Existing files were preserved. You can restore a complete backup in Settings. Details: \(error.localizedDescription)"
         }
+    }
+
+    private func discoverRecoveryBackups() {
+        let folder = directory.appendingPathComponent("recovery", isDirectory: true)
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        let files = (try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys))) ?? []
+        let valid: [(URL, Date)] = files.compactMap { url in
+            guard url.pathExtension == "invoke", let info = try? url.resourceValues(forKeys: keys),
+                  info.isRegularFile == true, let size = info.fileSize, size <= BackupValidation.maximumBackupBytes,
+                  let bytes = try? Data(contentsOf: url, options: .mappedIfSafe),
+                  (try? BackupValidation.decode(bytes)) != nil else { return nil }
+            return (url, info.contentModificationDate ?? .distantPast)
+        }
+        recoveryBackupURLs = valid.sorted { $0.1 > $1.1 }.map(\.0)
+        lastRecoveryBackupURL = recoveryBackupURLs.first
     }
 
     private func loadSnapshot(at url: URL) throws {
@@ -244,6 +265,9 @@ final class AppStore: ObservableObject {
 
     /// Exports current memory as well as saved data so a disk error does not erase a draft.
     func makeBackup() throws -> BackupDocument {
+        guard !diskWritesBlocked else {
+            throw InvokeDataError.invalidBackup("Saved data needs recovery. A complete backup cannot be exported from the empty recovery screen. Share an existing recovery copy or restore a validated backup in Settings; existing storage remains untouched.")
+        }
         var assets: [String: BackupAsset] = [:]
         for name in BackupValidation.imageNames(in: data) {
             guard let url = imageURL(name) else { throw InvokeDataError.missingPhoto(name) }
@@ -297,7 +321,10 @@ final class AppStore: ObservableObject {
             suppressAutosave = true
             data = restoredData
             suppressAutosave = false
-            lastRecoveryBackupURL = diskWritesBlocked ? nil : recoveryURL
+            if !diskWritesBlocked {
+                recoveryBackupURLs = [recoveryURL] + recoveryBackupURLs.filter { $0 != recoveryURL }
+                lastRecoveryBackupURL = recoveryURL
+            }
             diskWritesBlocked = false
             saveState = "Restored and saved on this iPhone"
             errorMessage = nil

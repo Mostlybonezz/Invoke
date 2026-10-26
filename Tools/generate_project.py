@@ -55,8 +55,10 @@ for config in ['Debug', 'Release']:
     if config == 'Debug': b['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = 'DEBUG $(inherited)'
     obj('project-' + config, 'XCBuildConfiguration', f'buildSettings = {settings(b)}; name = {config};')
     app = {'ASSETCATALOG_COMPILER_APPICON_NAME': 'AppIcon', 'CODE_SIGN_STYLE': 'Automatic', 'CURRENT_PROJECT_VERSION': '1', 'GENERATE_INFOPLIST_FILE': 'NO', 'INFOPLIST_FILE': 'Invoke/Resources/Info.plist', 'LD_RUNPATH_SEARCH_PATHS': '$(inherited) @executable_path/Frameworks', 'MARKETING_VERSION': '2.0.0', 'PRODUCT_BUNDLE_IDENTIFIER': 'app.invoke.personal', 'PRODUCT_NAME': '$(TARGET_NAME)', 'SUPPORTED_PLATFORMS': 'iphoneos iphonesimulator', 'SUPPORTS_MACCATALYST': 'NO', 'TARGETED_DEVICE_FAMILY': '1', 'ENABLE_PREVIEWS': 'YES', 'MTL_ENABLE_DEBUG_INFO': 'INCLUDE_SOURCE' if config == 'Debug' else 'NO'}
+    app['OTHER_LDFLAGS'] = '$(inherited) -lsqlite3'
     obj('app-' + config, 'XCBuildConfiguration', f'buildSettings = {settings(app)}; name = {config};')
     test = {'BUNDLE_LOADER': '$(TEST_HOST)', 'CODE_SIGN_STYLE': 'Automatic', 'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'app.invoke.personal.tests', 'PRODUCT_NAME': '$(TARGET_NAME)', 'TARGETED_DEVICE_FAMILY': '1', 'TEST_HOST': '$(BUILT_PRODUCTS_DIR)/Invoke.app/Invoke', 'LD_RUNPATH_SEARCH_PATHS': '$(inherited) @executable_path/Frameworks @loader_path/Frameworks'}
+    test['OTHER_LDFLAGS'] = '$(inherited) -lsqlite3'
     obj('test-' + config, 'XCBuildConfiguration', f'buildSettings = {settings(test)}; name = {config};')
     ui_test = {'CODE_SIGN_STYLE': 'Automatic', 'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'app.invoke.personal.uitests', 'PRODUCT_NAME': '$(TARGET_NAME)', 'TARGETED_DEVICE_FAMILY': '1', 'TEST_TARGET_NAME': 'Invoke', 'LD_RUNPATH_SEARCH_PATHS': '$(inherited) @executable_path/Frameworks @loader_path/Frameworks'}
     obj('ui-test-' + config, 'XCBuildConfiguration', f'buildSettings = {settings(ui_test)}; name = {config};')

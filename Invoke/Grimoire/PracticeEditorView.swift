@@ -8,8 +8,8 @@ struct PracticeEditorView: View {
     init(draft: PracticeDefinition = PracticeDefinition()) { _draft = State(initialValue: draft) }
     private var existing: Bool { store.data.grimoire.practices.contains { $0.id == draft.id } }
     private var previews: [PracticeOccurrence] {
-        let calendar = GrimoirePresentation.calendar(store.data.grimoire.settings)
-        let start = GrimoirePresentation.date(draft.schedule.startDate, settings: store.data.grimoire.settings)
+        let calendar = ScheduleEngine.calendar(zone: ScheduleEngine.zone(for: draft.schedule, settings: store.data.grimoire.settings), weekStart: store.data.grimoire.settings.weekStartsOn)
+        let start = ScheduleEngine.date(draft.schedule.startDate, in: calendar) ?? Date()
         return Array(ScheduleEngine.occurrences(for: draft, in: DateInterval(start: start, end: calendar.date(byAdding: .year, value: 3, to: start)!), settings: store.data.grimoire.settings, actions: store.data.grimoire.actions, events: store.data.grimoire.events, limit: 8).prefix(3))
     }
     var body: some View {
@@ -58,6 +58,19 @@ struct PracticeEditorView: View {
                     TextField("Responsible person (optional)", text: $draft.responsiblePerson)
                 }
                 DisclosureGroup("Connections") {
+                    Picker("Original ritual (optional)", selection: $draft.legacyEntryID) {
+                        Text("None").tag(nil as UUID?)
+                        ForEach(store.data.entries.filter { $0.kind == .ritual || $0.id == draft.legacyEntryID }) { entry in
+                            Text(entry.title + (entry.archived ? " · Archived" : "")).tag(Optional(entry.id))
+                        }
+                    }.accessibilityIdentifier("practice-original-ritual")
+                    Picker("Original scene (optional)", selection: $draft.legacySceneID) {
+                        Text("None").tag(nil as UUID?)
+                        ForEach(store.data.scenes) { scene in
+                            Text(scene.title + (scene.archived ? " · Archived" : "")).tag(Optional(scene.id))
+                        }
+                    }.accessibilityIdentifier("practice-original-scene")
+                    Text("Link a page from your original collection. Its writing and history remain available; linking does not create a completion.").font(.footnote)
                     Picker("Asset or supply", selection: $draft.assetID) {
                         Text("None").tag(nil as UUID?)
                         ForEach(store.data.grimoire.assets.filter { !$0.archived }) { Text($0.name).tag(Optional($0.id)) }
@@ -97,13 +110,14 @@ struct ScheduleEditorFields: View {
     @Binding var rule: ScheduleRule
     let settings: GrimoireSettings
     @State private var advanced = false
-    private var calendar: Calendar { GrimoirePresentation.calendar(settings) }
-    private var start: Binding<Date> { Binding(get: { GrimoirePresentation.date(rule.startDate, settings: settings) }, set: { rule.startDate = LocalDay($0, timeZone: calendar.timeZone) }) }
+    private var calendar: Calendar { ScheduleEngine.calendar(zone: ScheduleEngine.zone(for: rule, settings: settings), weekStart: settings.weekStartsOn) }
+    private var start: Binding<Date> { Binding(get: { ScheduleEngine.date(rule.startDate, in: calendar) ?? Date() }, set: { rule.startDate = LocalDay($0, timeZone: calendar.timeZone); if monthlyFamily && !rule.lastDayOfMonth && rule.weekdayOrdinal == nil { rule.dayOfMonth = rule.startDate.day } }) }
     private var monthlyFamily: Bool { [.monthly, .quarterly, .semiannual, .annual].contains(rule.kind) }
     var body: some View {
         Section("Schedule") {
             Picker("Repeats", selection: $rule.kind) { ForEach(ScheduleKind.allCases) { Text($0.title).tag($0) } }.accessibilityIdentifier("quest-schedule-kind")
-            if rule.kind != .unscheduled { DatePicker(rule.kind == .once ? "Date" : "Starts / anchor", selection: start, displayedComponents: .date) }
+                .onChange(of: rule.kind) { _, newKind in if [.monthly, .quarterly, .semiannual, .annual].contains(newKind) { rule.dayOfMonth = rule.startDate.day } }
+            if rule.kind != .unscheduled { DatePicker(rule.kind == .once ? "Date" : "Starts / anchor", selection: start, displayedComponents: .date).environment(\.timeZone, calendar.timeZone) }
             if rule.kind == .weekdays {
                 ForEach(1...7, id: \.self) { day in
                     Toggle(calendar.weekdaySymbols[day - 1], isOn: Binding(get: { rule.weekdays.contains(day) }, set: { selected in
@@ -113,7 +127,7 @@ struct ScheduleEditorFields: View {
             }
             if rule.kind == .weeklyQuota { Stepper("\(rule.quota) sessions per week", value: $rule.quota, in: 1...50) }
             if monthlyFamily {
-                Toggle("Last day of month", isOn: $rule.lastDayOfMonth)
+                Toggle("Last day of month", isOn: Binding(get: { rule.lastDayOfMonth }, set: { rule.lastDayOfMonth = $0; if $0 { rule.weekdayOrdinal = nil } }))
                 if !rule.lastDayOfMonth {
                     Toggle("Selected weekday", isOn: Binding(get: { rule.weekdayOrdinal != nil }, set: { rule.weekdayOrdinal = $0 ? 1 : nil }))
                     if rule.weekdayOrdinal != nil {
@@ -162,9 +176,15 @@ struct ScheduleEditorFields: View {
                 }
                 Text("Availability, due time, hard deadline and reminder are separate. Changing a date here does not change an external obligation.").font(.footnote)
                 Text("Times use \(ScheduleEngine.zone(for: rule, settings: settings).identifier). In a daylight-saving gap, use the next valid local time; a repeated time occurs once.").font(.footnote)
+                Toggle("Pin this practice to a time zone", isOn: Binding(get: { rule.homeTimeZoneID != nil }, set: { rule.homeTimeZoneID = $0 ? calendar.timeZone.identifier : nil }))
+                if rule.homeTimeZoneID != nil {
+                    Picker("Practice time zone", selection: Binding(get: { rule.homeTimeZoneID ?? calendar.timeZone.identifier }, set: { rule.homeTimeZoneID = $0 })) {
+                        ForEach(TimeZone.knownTimeZoneIdentifiers, id: \.self) { Text($0).tag($0) }
+                    }
+                }
                 Toggle("End this schedule", isOn: Binding(get: { rule.endDate != nil }, set: { rule.endDate = $0 ? rule.startDate : nil }))
                 if rule.endDate != nil {
-                    DatePicker("End date", selection: Binding(get: { GrimoirePresentation.date(rule.endDate ?? rule.startDate, settings: settings) }, set: { rule.endDate = LocalDay($0, timeZone: calendar.timeZone) }), displayedComponents: .date)
+                    DatePicker("End date", selection: Binding(get: { ScheduleEngine.date(rule.endDate ?? rule.startDate, in: calendar) ?? Date() }, set: { rule.endDate = LocalDay($0, timeZone: calendar.timeZone) }), displayedComponents: .date).environment(\.timeZone, calendar.timeZone)
                 }
             }
         }

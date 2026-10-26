@@ -1,7 +1,20 @@
 import Foundation
 
+struct ScheduleProjection {
+    var occurrences: [PracticeOccurrence]
+    var truncated: Bool
+}
+
 /// Pure calendar projection. Callers inject the query dates, records and zone policy.
 enum ScheduleEngine {
+    static func projection(for practice: PracticeDefinition, in range: DateInterval, settings: GrimoireSettings,
+                           actions: [ActionRecord] = [], events: [GrimoireEvent] = [], currentZone: TimeZone = .current,
+                           limit: Int = 20_000) -> ScheduleProjection {
+        guard limit > 0 else { return ScheduleProjection(occurrences: [], truncated: true) }
+        let rows = occurrences(for: practice, in: range, settings: settings, actions: actions, events: events,
+                               currentZone: currentZone, limit: limit + 1)
+        return ScheduleProjection(occurrences: Array(rows.prefix(limit)), truncated: rows.count > limit)
+    }
     static func zone(for rule: ScheduleRule, settings: GrimoireSettings, currentZone: TimeZone = .current) -> TimeZone {
         if let value = rule.homeTimeZoneID, let zone = TimeZone(identifier: value) { return zone }
         return settings.followsTravelTimeZone ? currentZone : (TimeZone(identifier: settings.homeTimeZoneID) ?? currentZone)
@@ -41,9 +54,9 @@ enum ScheduleEngine {
         let queryEnd = min(range.end, endLimit ?? range.end)
         guard queryEnd > beginning else { return [] }
         var result: [PracticeOccurrence] = []
-        func add(_ start: Date, end: Date? = nil, key: String? = nil, eventID: UUID? = nil) {
+        func add(_ start: Date, end: Date? = nil, key: String? = nil, eventID: UUID? = nil, includePast: Bool = false) {
             guard result.count < limit, let finish = end ?? cal.date(byAdding: .day, value: 1, to: start) else { return }
-            guard finish > range.start, start < queryEnd, finish > beginning else { return }
+            guard (includePast || finish > range.start), start < queryEnd, finish > beginning else { return }
             let startDay = LocalDay(start, timeZone: zone), endDay = LocalDay(finish, timeZone: zone)
             let slots: [(String, Date)] = rule.slots.isEmpty || [.weekly, .weeklyQuota, .unscheduled].contains(rule.kind) ? [("day", start)] : rule.slots.compactMap {
                 guard let time = wallTime(day: startDay, hour: $0.hour, minute: $0.minute, calendar: cal) else { return nil }
@@ -52,14 +65,18 @@ enum ScheduleEngine {
             for (slot, available) in slots where result.count < limit {
                 if practice.version > 1 && available < practice.effectiveFrom { continue }
                 if practice.pauses.contains(where: { available >= $0.startedAt && available < ($0.endedAt ?? .distantFuture) }) { continue }
-                let target = rule.deadlineHour.flatMap { wallTime(day: startDay, hour: $0, minute: rule.deadlineMinute, calendar: cal) }
+                // A window's selected deadline time belongs to its final calendar day,
+                // not the first day (which might precede a midweek activation).
+                let deadlineDay = LocalDay(cal.date(byAdding: .day, value: -1, to: finish)!, timeZone: zone)
+                let target = rule.deadlineHour.flatMap { wallTime(day: deadlineDay, hour: $0, minute: rule.deadlineMinute, calendar: cal) }
                 let due = target ?? finish.addingTimeInterval(-1)
                 let identity = "\(practice.id.uuidString):v\(practice.version):\(key ?? startDay.description):\(slot)"
                 result.append(PracticeOccurrence(id: identity, practiceID: practice.id, definitionVersion: practice.version,
                     title: practice.title, steps: practice.steps, windowStart: startDay, windowEnd: endDay,
                     availableAt: max(available, beginning), dueAt: due, hardDeadline: rule.hardDeadline ? due : nil,
                     timeZoneID: zone.identifier, slotKey: slot, requiredSessions: rule.kind == .weeklyQuota ? rule.quota : 1,
-                    eventID: eventID))
+                    eventID: eventID, instructions: practice.instructions, context: practice.context,
+                    materials: practice.materials, smallerVersion: practice.smallerVersion))
             }
         }
         let lower = max(cal.startOfDay(for: range.start), beginning)
@@ -71,7 +88,8 @@ enum ScheduleEngine {
                 result.append(PracticeOccurrence(id: "\(practice.id):v\(practice.version):unscheduled:day", practiceID: practice.id,
                     definitionVersion: practice.version, title: practice.title, steps: practice.steps,
                     windowStart: LocalDay(beginning, timeZone: zone), windowEnd: LocalDay(finish, timeZone: zone),
-                    availableAt: beginning, dueAt: nil, hardDeadline: nil, timeZoneID: zone.identifier, slotKey: "day"))
+                    availableAt: beginning, dueAt: nil, hardDeadline: nil, timeZoneID: zone.identifier, slotKey: "day",
+                    instructions: practice.instructions, context: practice.context, materials: practice.materials, smallerVersion: practice.smallerVersion))
             }
         case .once:
             add(anchor)
@@ -105,7 +123,7 @@ enum ScheduleEngine {
                     let start = cal.date(from: DateComponents(year: parts.year, month: quarterMonth, day: 1))!
                     let end = cal.date(byAdding: .month, value: 3, to: start)!
                     add(start, end: end, key: "quarter-\(LocalDay(start, timeZone: zone))")
-                } else if let candidate = monthDate(month: month, preferredDay: rule.kind == .annual ? rule.startDate.day : rule.dayOfMonth,
+                } else if let candidate = monthDate(month: month, preferredDay: rule.dayOfMonth,
                                                       lastDay: rule.lastDayOfMonth, ordinal: rule.weekdayOrdinal,
                                                       weekday: rule.ordinalWeekday, calendar: cal) {
                     if candidate >= beginning { add(candidate) }
@@ -119,15 +137,8 @@ enum ScheduleEngine {
             let next = actual.flatMap { addInterval(rule.interval, unit: rule.intervalUnit, to: $0, calendar: cal) } ?? anchor
             let day = cal.startOfDay(for: next)
             let key = actual.map { "after-\(Int($0.timeIntervalSince1970 * 1_000))" } ?? "initial"
-            // Completion-anchored work remains one eligible unresolved action after its date.
-            if day < range.start {
-                let finish = cal.date(byAdding: .day, value: 1, to: day)!
-                result.append(PracticeOccurrence(id: "\(practice.id):v\(practice.version):\(key):day", practiceID: practice.id,
-                    definitionVersion: practice.version, title: practice.title, steps: practice.steps,
-                    windowStart: LocalDay(day, timeZone: zone), windowEnd: LocalDay(finish, timeZone: zone),
-                    availableAt: day, dueAt: finish.addingTimeInterval(-1), hardDeadline: rule.hardDeadline ? finish.addingTimeInterval(-1) : nil,
-                    timeZoneID: zone.identifier, slotKey: "day"))
-            } else { add(day, key: key) }
+            // Keep the same slot identities and deadlines when this eligibility becomes overdue.
+            add(day, key: key, includePast: true)
         case .event:
             for event in events where event.name.localizedCaseInsensitiveCompare(rule.eventName) == .orderedSame {
                 if event.occurredAt >= beginning {
@@ -147,7 +158,7 @@ enum ScheduleEngine {
                 iterations = max(0, months / (max(1, rule.interval) * (rule.intervalUnit == .year ? 12 : 1)))
                 cursor = addInterval(iterations * max(1, rule.interval), unit: rule.intervalUnit, to: anchor, calendar: cal)!
             }
-            while cursor < queryEnd && result.count < limit && iterations < 100_000 {
+            while cursor < queryEnd && result.count < limit {
                 if cursor >= beginning { add(cursor) }
                 iterations += 1
                 // Always calculate from the original anchor to avoid Jan 31 -> Feb 28 -> Mar 28 drift.
@@ -200,7 +211,7 @@ enum ScheduleEngine {
         case .monthly: return rule.weekdayOrdinal.map { "Monthly weekday ordinal \($0); absent fifth weekdays are skipped." } ?? (rule.lastDayOfMonth ? "Last day of each month." : "Monthly on day \(rule.dayOfMonth), clamped to the last valid day.")
         case .quarterly: return rule.calendarQuarter ? "One review per calendar quarter." : "Every three calendar months from \(rule.startDate)."
         case .semiannual: return "Every six calendar months from \(rule.startDate)."
-        case .annual: return "Every year from \(rule.startDate); February 29 becomes February 28 in non-leap years."
+        case .annual: return "Every year in month \(rule.startDate.month), day \(rule.dayOfMonth), clamped to the last valid day."
         case .afterCompletion: return "\(rule.interval) \(rule.intervalUnit.rawValue)(s) after an actual full completion; skips do not advance it."
         case .event: return "After you record the event “\(rule.eventName)”."
         case .condition: return "Inspect every \(rule.interval) \(rule.intervalUnit.rawValue)(s); repair or replace only when warranted."

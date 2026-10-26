@@ -104,6 +104,8 @@ metadata = {
     'nativeUIScreenshots': ui_screenshots,
     'workflowRun': os.environ.get('GITHUB_RUN_ID'),
     'deviceValidation': 'Not performed by CI; test on the intended iPhone and LiveContainer version.',
+    'intendedHost': {'name': 'LiveContainer', 'ownerReportedVersion': '3.8.10',
+                     'physicalRuntimeValidation': 'Not performed; exact host build and signing mode unverified.'},
 }
 (output / 'build-info.json').write_text(json.dumps(metadata, indent=2) + '\n')
 print(json.dumps(metadata, indent=2))

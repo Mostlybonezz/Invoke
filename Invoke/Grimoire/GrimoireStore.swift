@@ -6,7 +6,10 @@ enum GrimoireLogic {
     }
     static func status(of occurrence: PracticeOccurrence, actions: [ActionRecord]) -> OccurrenceStatus {
         let active = ScheduleEngine.activeActions(actions).filter { $0.occurrenceID == occurrence.id }
-        if sessionCount(for: occurrence, actions: active) >= occurrence.requiredSessions { return .completed }
+        return status(of: occurrence, active: active)
+    }
+    static func status(of occurrence: PracticeOccurrence, active: [ActionRecord]) -> OccurrenceStatus {
+        if Set(active.filter { $0.kind == .complete }.map(\.sessionID)).count >= occurrence.requiredSessions { return .completed }
         if active.contains(where: { $0.kind == .skip }) { return .skipped }
         if active.contains(where: { $0.kind == .progress || $0.kind == .smaller || $0.kind == .complete }) { return .partial }
         if active.contains(where: { $0.kind == .begin }) { return .inProgress }
@@ -15,11 +18,46 @@ enum GrimoireLogic {
     }
 }
 
+struct GrimoireProjection {
+    var occurrences: [PracticeOccurrence]
+    var warnings: [String] = []
+    var truncated: Bool { !warnings.isEmpty }
+}
+
+/// Ephemeral memoization only: no published state or disk writes from view selectors.
+@MainActor
+final class GrimoireQueryCache {
+    struct Key: Hashable { var start: Date; var end: Date; var minute: Int; var zone: String }
+    var projections: [Key: GrimoireProjection] = [:]
+    var byOccurrence: [String: [ActionRecord]] = [:]
+    var byPractice: [UUID: [ActionRecord]] = [:]
+    private var indexed = false
+    private(set) var actionIndexBuilds = 0
+    func invalidate() { indexed = false; byOccurrence = [:]; byPractice = [:]; projections = [:] }
+    func prepare(_ actions: [ActionRecord]) {
+        guard !indexed else { return }
+        let active = ScheduleEngine.activeActions(actions)
+        byOccurrence = Dictionary(grouping: active, by: \.occurrenceID).mapValues { $0.sorted { $0.recordedAt < $1.recordedAt } }
+        byPractice = Dictionary(grouping: active, by: \.practiceID)
+        indexed = true; actionIndexBuilds += 1
+    }
+}
+
 @MainActor
 extension AppStore {
     func grimoireOccurrences(in range: DateInterval, now: Date = Date()) -> [PracticeOccurrence] {
+        grimoireProjection(in: range, now: now).occurrences
+    }
+    func grimoireProjection(in range: DateInterval, now: Date = Date()) -> GrimoireProjection {
+        let cache = grimoireQueryCache
+        cache.prepare(data.grimoire.actions)
+        let key = GrimoireQueryCache.Key(start: range.start, end: range.end,
+            minute: Int(now.timeIntervalSince1970 / 60), zone: TimeZone.current.identifier)
+        if let saved = cache.projections[key] { return saved }
         let definitions = Dictionary(uniqueKeysWithValues: data.grimoire.practices.map { ($0.id, $0) })
+        let storedByPractice = Dictionary(grouping: data.grimoire.occurrences.filter { !$0.superseded }, by: \.practiceID)
         var result: [String: PracticeOccurrence] = [:]
+        var warnings: [String] = []
         for practice in data.grimoire.practices where !practice.archived && !practice.paused {
             let persistent = practice.schedule.policy == .persist || practice.schedule.hardDeadline || practice.schedule.kind == .event || practice.schedule.kind == .once
             let zone = ScheduleEngine.zone(for: practice.schedule, settings: data.grimoire.settings)
@@ -27,8 +65,27 @@ extension AppStore {
             let anchor = ScheduleEngine.date(practice.schedule.startDate, in: cal) ?? practice.createdAt
             let start = persistent ? min(range.start, anchor) : range.start
             let query = DateInterval(start: start, end: range.end)
-            for occurrence in ScheduleEngine.occurrences(for: practice, in: query, settings: data.grimoire.settings,
-                actions: data.grimoire.actions, events: data.grimoire.events) {
+            let projected = ScheduleEngine.projection(for: practice, in: query, settings: data.grimoire.settings,
+                actions: cache.byPractice[practice.id] ?? [], events: data.grimoire.events)
+            if projected.truncated {
+                warnings.append("\(practice.title): this view reached its 20,000-occurrence limit. The earliest occurrences are shown; later obligations may be outside this view. No saved records were removed.")
+            }
+            for var occurrence in projected.occurrences {
+                if [.weekly, .weeklyQuota].contains(practice.schedule.kind) {
+                    // Calendar changes never reset an already established weekly period.
+                    // A newly aligned period begins at the prior period's boundary.
+                    var suppressed = false
+                    for prior in storedByPractice[practice.id] ?? [] where prior.definitionVersion == occurrence.definitionVersion && prior.id != occurrence.id {
+                        let oldCal = ScheduleEngine.calendar(zone: TimeZone(identifier: prior.timeZoneID) ?? zone)
+                        guard let oldEnd = ScheduleEngine.date(prior.windowEnd, in: oldCal),
+                              let newEnd = ScheduleEngine.date(occurrence.windowEnd, in: cal),
+                              prior.availableAt < newEnd, oldEnd > occurrence.availableAt else { continue }
+                        if newEnd <= oldEnd { suppressed = true; break }
+                        occurrence.availableAt = oldEnd
+                        occurrence.windowStart = LocalDay(oldEnd, timeZone: zone)
+                    }
+                    if suppressed || occurrence.availableAt >= range.end { continue }
+                }
                 result[occurrence.id] = occurrence
             }
         }
@@ -45,7 +102,7 @@ extension AppStore {
             } else { result.removeValue(forKey: occurrence.id) }
         }
         let suppressed = Set(data.grimoire.occurrences.filter(\.superseded).map(\.id))
-        return result.values.filter { !suppressed.contains($0.id) }.sorted {
+        let sorted = result.values.filter { !suppressed.contains($0.id) }.sorted {
             let a = definitions[$0.practiceID]!, b = definitions[$1.practiceID]!
             let aUrgent = $0.hardDeadline.map { $0 <= now } ?? (a.importance == .critical && ($0.dueAt ?? .distantFuture) <= now)
             let bUrgent = $1.hardDeadline.map { $0 <= now } ?? (b.importance == .critical && ($1.dueAt ?? .distantFuture) <= now)
@@ -56,14 +113,41 @@ extension AppStore {
             if b.id == data.grimoire.settings.focusPracticeID && a.id != b.id { return false }
             return $0.id < $1.id
         }
+        let report = GrimoireProjection(occurrences: sorted, warnings: warnings)
+        if cache.projections.count >= 8 { cache.projections.removeAll() }
+        cache.projections[key] = report
+        return report
     }
-    func occurrenceStatus(_ occurrence: PracticeOccurrence) -> OccurrenceStatus { GrimoireLogic.status(of: occurrence, actions: data.grimoire.actions) }
-    func sessionCount(for occurrence: PracticeOccurrence) -> Int { GrimoireLogic.sessionCount(for: occurrence, actions: data.grimoire.actions) }
+    func occurrenceStatus(_ occurrence: PracticeOccurrence) -> OccurrenceStatus {
+        GrimoireLogic.status(of: occurrence, active: activeActions(for: occurrence.id))
+    }
+    func sessionCount(for occurrence: PracticeOccurrence) -> Int {
+        Set(activeActions(for: occurrence.id).filter { $0.kind == .complete }.map(\.sessionID)).count
+    }
     func activeActions(for occurrenceID: String) -> [ActionRecord] {
-        ScheduleEngine.activeActions(data.grimoire.actions).filter { $0.occurrenceID == occurrenceID }.sorted { $0.recordedAt < $1.recordedAt }
+        grimoireQueryCache.prepare(data.grimoire.actions)
+        return grimoireQueryCache.byOccurrence[occurrenceID] ?? []
     }
-    func commitGrimoire(_ value: GrimoireData) throws {
-        var candidate = data; candidate.grimoire = value
+    func commitGrimoire(_ value: GrimoireData, now: Date = Date()) throws {
+        var revised = value
+        let before = data.grimoire.settings, after = value.settings
+        if before.weekStartsOn != after.weekStartsOn || before.homeTimeZoneID != after.homeTimeZoneID || before.followsTravelTimeZone != after.followsTravelTimeZone {
+            let query = DateInterval(start: now, duration: 1)
+            var known = Set(revised.occurrences.map(\.id))
+            for practice in data.grimoire.practices where [.weekly, .weeklyQuota].contains(practice.schedule.kind) {
+                let oldPeriods = ScheduleEngine.occurrences(for: practice, in: query, settings: before)
+                for period in oldPeriods where period.availableAt <= now && known.insert(period.id).inserted {
+                    // If a prior transition already retained this period, keep its original boundary.
+                    let overlaps = revised.occurrences.contains { prior in
+                        guard prior.practiceID == practice.id, prior.definitionVersion == period.definitionVersion, !prior.superseded else { return false }
+                        let cal = ScheduleEngine.calendar(zone: TimeZone(identifier: prior.timeZoneID) ?? .current)
+                        return prior.availableAt <= now && (ScheduleEngine.date(prior.windowEnd, in: cal) ?? .distantPast) > now
+                    }
+                    if !overlaps { revised.occurrences.append(period) }
+                }
+            }
+        }
+        var candidate = data; candidate.grimoire = revised
         try commitSnapshot(candidate)
     }
     func ensureOccurrence(_ occurrence: PracticeOccurrence) throws {
@@ -74,7 +158,9 @@ extension AppStore {
         var value = data.grimoire; value.occurrences.append(occurrence); try commitGrimoire(value)
     }
     func materializeOccurrences(in range: DateInterval, now: Date = Date()) throws {
-        let generated = grimoireOccurrences(in: range, now: now)
+        let report = grimoireProjection(in: range, now: now)
+        guard !report.truncated else { throw InvokeDataError.invalidBackup(report.warnings.joined(separator: "\n")) }
+        let generated = report.occurrences
         let known = Set(data.grimoire.occurrences.map(\.id))
         let additions = generated.filter { !known.contains($0.id) }
         guard !additions.isEmpty else { return }
@@ -90,19 +176,32 @@ extension AppStore {
         let old = value.practices[index]
         var edited = practice
         edited.createdAt = old.createdAt; edited.updatedAt = effectiveFrom
+        let scheduleChanged = old.schedule != edited.schedule || old.steps != edited.steps || old.instructions != edited.instructions ||
+            old.context != edited.context || old.materials != edited.materials || old.smallerVersion != edited.smallerVersion || old.title != edited.title
+        if scheduleChanged && edited.schedule.kind == .once {
+            let editedZone = ScheduleEngine.zone(for: edited.schedule, settings: value.settings)
+            let editedCal = ScheduleEngine.calendar(zone: editedZone)
+            if let day = ScheduleEngine.date(edited.schedule.startDate, in: editedCal), day < effectiveFrom {
+                throw InvokeDataError.invalidBackup("A revised one-time date must be on or after its effective time. Choose an earlier effective date deliberately, or keep and reschedule the existing occurrence. Nothing was changed.")
+            }
+        }
         // Snapshot existing past opportunities before changing the future rule. They remain available in Chronicle.
         let zone = ScheduleEngine.zone(for: old.schedule, settings: value.settings)
         let calendar = ScheduleEngine.calendar(zone: zone, weekStart: value.settings.weekStartsOn)
         let anchor = ScheduleEngine.date(old.schedule.startDate, in: calendar) ?? old.createdAt
-        let historical = ScheduleEngine.occurrences(for: old, in: DateInterval(start: min(anchor, effectiveFrom), end: effectiveFrom),
+        let history = ScheduleEngine.projection(for: old, in: DateInterval(start: min(anchor, effectiveFrom), end: effectiveFrom),
             settings: value.settings, actions: value.actions, events: value.events)
+        guard !history.truncated else {
+            throw InvokeDataError.invalidBackup("This practice has more than 20,000 historical occurrences. A future edit cannot safely snapshot the entire history in one transaction. Existing data is unchanged; preserve a backup before creating a separate future practice.")
+        }
         var known = Set(value.occurrences.map(\.id))
-        for item in historical where known.insert(item.id).inserted { value.occurrences.append(item) }
-        if old.schedule != edited.schedule || old.steps != edited.steps {
+        for item in history.occurrences where known.insert(item.id).inserted { value.occurrences.append(item) }
+        if scheduleChanged {
             edited.version = old.version + 1
             edited.effectiveFrom = effectiveFrom
             edited.revisions = old.revisions + [PracticeRevision(version: old.version, effectiveFrom: old.effectiveFrom,
-                title: old.title, instructions: old.instructions, steps: old.steps, schedule: old.schedule)]
+                title: old.title, instructions: old.instructions, context: old.context, materials: old.materials,
+                smallerVersion: old.smallerVersion, steps: old.steps, schedule: old.schedule)]
             for i in value.occurrences.indices where value.occurrences[i].practiceID == old.id && value.occurrences[i].availableAt >= effectiveFrom {
                 if !value.actions.contains(where: { $0.occurrenceID == value.occurrences[i].id }) { value.occurrences[i].superseded = true }
             }
@@ -206,7 +305,10 @@ extension AppStore {
     func saveInvocation(_ record: Invocation) throws {
         var v = data.grimoire
         var revised = record
+        revised.updatedAt = Date()
+        if revised.archived || revised.status == "Archived" { revised.archived = true; revised.status = "Archived" }
         if let old = v.invocations.first(where: { $0.id == record.id }) {
+            revised.createdAt = old.createdAt
             let supplied = Set(record.observations.map(\.id))
             revised.observations += old.observations.filter { !supplied.contains($0.id) }
             try Self.audit(before: old, after: revised, type: "Invocation", title: record.title, summary: "Intention or milestones revised; outcomes remain user-recorded.", into: &v)
@@ -214,33 +316,40 @@ extension AppStore {
         Self.upsert(revised, in: &v.invocations); try commitGrimoire(v)
     }
     func saveSpell(_ record: Spell) throws {
+        var record = record; record.updatedAt = Date()
         var v = data.grimoire
-        if let old = v.spells.first(where: { $0.id == record.id }) { try Self.audit(before: old, after: record, type: "Spell", title: record.title, summary: "Saved technique revised.", into: &v) }
+        if let old = v.spells.first(where: { $0.id == record.id }) { record.createdAt = old.createdAt; try Self.audit(before: old, after: record, type: "Spell", title: record.title, summary: "Saved technique revised.", into: &v) }
         Self.upsert(record, in: &v.spells); try commitGrimoire(v)
     }
     func saveEnchantment(_ record: Enchantment) throws {
+        var record = record; record.updatedAt = Date()
         var v = data.grimoire
-        if let old = v.enchantments.first(where: { $0.id == record.id }) { try Self.audit(before: old, after: record, type: "Enchantment", title: record.title, summary: "Arrangement: \(old.status) → \(record.status).", into: &v) }
+        if let old = v.enchantments.first(where: { $0.id == record.id }) { record.createdAt = old.createdAt; try Self.audit(before: old, after: record, type: "Enchantment", title: record.title, summary: "Arrangement: \(old.status) → \(record.status).", into: &v) }
         Self.upsert(record, in: &v.enchantments); try commitGrimoire(v)
     }
     func saveAsset(_ record: CareAsset) throws {
         var v = data.grimoire; var revised = record
+        revised.updatedAt = Date()
         if let existing = v.assets.first(where: { $0.id == record.id }) {
+            revised.createdAt = existing.createdAt
             let provided = Set(revised.inspections.map(\.id))
+            if existing.inspections.contains(where: { !provided.contains($0.id) }) { revised.condition = existing.condition }
             revised.inspections += existing.inspections.filter { !provided.contains($0.id) }
             try Self.audit(before: existing, after: revised, type: "Asset", title: record.name, summary: "Asset care record revised.", into: &v)
         }
         Self.upsert(revised, in: &v.assets); try commitGrimoire(v)
     }
     func saveArcana(_ record: ArcanaRecord) throws {
+        var record = record; record.updatedAt = Date()
         var v = data.grimoire
-        if let old = v.arcana.first(where: { $0.id == record.id }) { try Self.audit(before: old, after: record, type: "Arcana", title: record.title,
+        if let old = v.arcana.first(where: { $0.id == record.id }) { record.createdAt = old.createdAt; try Self.audit(before: old, after: record, type: "Arcana", title: record.title,
             summary: old.beliefStatus == record.beliefStatus ? "Practice or observation revised." : "Belief position: \(old.beliefStatus) → \(record.beliefStatus).", into: &v) }
         Self.upsert(record, in: &v.arcana); try commitGrimoire(v)
     }
     func saveEcho(_ record: Echo) throws {
+        var record = record; record.updatedAt = Date()
         var v = data.grimoire
-        if let old = v.echoes.first(where: { $0.id == record.id }) { try Self.audit(before: old, after: record, type: "Echo", title: record.title, summary: "Comparative sources or interpretation revised.", into: &v) }
+        if let old = v.echoes.first(where: { $0.id == record.id }) { record.createdAt = old.createdAt; try Self.audit(before: old, after: record, type: "Echo", title: record.title, summary: "Comparative sources or interpretation revised.", into: &v) }
         Self.upsert(record, in: &v.echoes); try commitGrimoire(v)
     }
     func saveEvent(_ record: GrimoireEvent) throws { var v = data.grimoire; Self.upsert(record, in: &v.events); try commitGrimoire(v) }
@@ -249,8 +358,11 @@ extension AppStore {
         guard !data.grimoire.assets[index].inspections.contains(where: { $0.id == inspection.id }) else { return }
         var value = data.grimoire; var saved = inspection
         if var followUp {
-            guard ["Needs repair", "Needs replacement"].contains(inspection.condition) else {
+            guard ["Needs repair", "Needs replacement", "Needs replenishment"].contains(inspection.condition) else {
                 throw InvokeDataError.invalidBackup("A serviceable inspection does not create replacement work.")
+            }
+            guard !value.practices.contains(where: { $0.id == followUp.id }) else {
+                throw InvokeDataError.invalidBackup("The follow-up identifier already belongs to an existing practice. It was not overwritten.")
             }
             followUp.assetID = assetID; saved.followUpPracticeID = followUp.id
             Self.upsert(followUp, in: &value.practices)

@@ -287,7 +287,7 @@ struct ChronicleActionDetailView: View {
     }
 }
 
-private enum GrimoireHistoryDate {
+enum GrimoireHistoryDate {
     static func string(_ date: Date, zoneID: String, includeTime: Bool = false) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .long

@@ -109,14 +109,20 @@ final class GrimoireStoreTests: XCTestCase {
     }
     @MainActor func testFutureRevisionRetainsOriginalCompletedTitleAndSteps() throws {
         let s = store(); var p = practice(); p.steps = [PracticeStep(title: "Original step")]
+        p.instructions = "Original instructions"; p.context = "Original trigger"; p.materials = "Original materials"; p.smallerVersion = "Original smaller version"
         let row = try occurrence(s, practice: p), session = try s.beginSession(occurrenceID: row.id, now: date())
         _ = try s.recordAction(occurrenceID: row.id, kind: .complete, sessionID: session, requestID: UUID(), steps: p.steps.map(\.id), occurredAt: date(), now: date())
         p.title = "Changed"; p.steps = [PracticeStep(title: "Future step")]; p.schedule.kind = .weekly
+        p.instructions = "Future instructions"; p.context = "Future trigger"; p.materials = "Future materials"; p.smallerVersion = "Future smaller version"
         try s.savePractice(p, effectiveFrom: date("2024-01-03T00:00:00Z"))
         XCTAssertEqual(s.data.grimoire.practices[0].version, 2)
         XCTAssertEqual(s.data.grimoire.occurrences.first(where: { $0.id == row.id })?.title, "My practice")
         XCTAssertEqual(s.data.grimoire.occurrences.first(where: { $0.id == row.id })?.steps[0].title, "Original step")
         XCTAssertEqual(s.sessionCount(for: row), 1)
+        let saved = try XCTUnwrap(s.data.grimoire.occurrences.first { $0.id == row.id })
+        XCTAssertEqual(saved.instructions, "Original instructions"); XCTAssertEqual(saved.context, "Original trigger")
+        XCTAssertEqual(saved.materials, "Original materials"); XCTAssertEqual(saved.smallerVersion, "Original smaller version")
+        XCTAssertEqual(s.data.grimoire.practices[0].revisions[0].context, "Original trigger")
     }
     @MainActor func testPauseArchiveAndRestoreViewPreferencesNeverEraseHistory() throws {
         let s = store(); let row = try occurrence(s)
@@ -146,6 +152,7 @@ final class GrimoireStoreTests: XCTestCase {
         XCTAssertEqual(s.data.grimoire.practices[0].assetID, boots.id)
         try s.saveAsset(boots)
         XCTAssertEqual(s.data.grimoire.assets[0].inspections.count, 1)
+        XCTAssertEqual(s.data.grimoire.assets[0].condition, "Needs repair")
         XCTAssertEqual(AppStore(directory: s.directory).data.grimoire.practices.count, 1)
     }
     @MainActor func testArcanaBeliefRevisionAndEchoSourcesSurvivePortableRoundTrip() throws {
@@ -240,5 +247,92 @@ final class GrimoireStoreTests: XCTestCase {
         try s.commitGrimoire(value)
         let rows = s.grimoireOccurrences(in: DateInterval(start: date("2026-10-26T00:00:00Z"), end: date("2026-10-27T00:00:00Z")))
         XCTAssertEqual(rows.count, 1_000); XCTAssertEqual(s.data.grimoire.actions.count, 3_000); XCTAssertEqual(s.data.grimoire.occurrences.count, 3_000)
+        let builds = s.grimoireQueryCache.actionIndexBuilds
+        for row in rows { XCTAssertEqual(s.occurrenceStatus(row), .unrecorded); XCTAssertEqual(s.sessionCount(for: row), 0) }
+        XCTAssertEqual(s.grimoireQueryCache.actionIndexBuilds, builds, "Rendering 1,000 rows must reuse one action index")
+    }
+    @MainActor func testReplenishmentFollowUpIsExplicitAtomicAndRetrySafe() throws {
+        let s = store(), asset = CareAsset(name: "Household supply")
+        try s.saveAsset(asset)
+        let observation = AssetInspection(condition: "Needs replenishment", notes: "Observed low stock")
+        let quest = practice(.once, title: "Review replenishment")
+        try s.recordInspection(assetID: asset.id, inspection: observation, followUp: quest)
+        try s.recordInspection(assetID: asset.id, inspection: observation, followUp: quest)
+        XCTAssertEqual(s.data.grimoire.assets[0].inspections.count, 1)
+        XCTAssertEqual(s.data.grimoire.assets[0].condition, "Needs replenishment")
+        XCTAssertEqual(s.data.grimoire.practices.map(\.id), [quest.id])
+        XCTAssertThrowsError(try s.recordInspection(assetID: asset.id, inspection: AssetInspection(condition: "Needs repair"), followUp: quest))
+        XCTAssertEqual(s.data.grimoire.assets[0].inspections.count, 1)
+    }
+    @MainActor func testEarlierOneOffRevisionRejectsWithoutLosingOriginalObligation() throws {
+        let s = store(); var p = practice(.once)
+        p.schedule.startDate = LocalDay(year: 2024, month: 1, day: 5)
+        try s.activatePractice(p)
+        let range = DateInterval(start: date("2024-01-01T00:00:00Z"), end: date("2024-01-10T00:00:00Z"))
+        let old = try XCTUnwrap(s.grimoireOccurrences(in: range).first); try s.ensureOccurrence(old)
+        p.schedule.startDate = LocalDay(year: 2024, month: 1, day: 2)
+        XCTAssertThrowsError(try s.savePractice(p, effectiveFrom: date("2024-01-04T00:00:00Z")))
+        XCTAssertEqual(s.data.grimoire.practices[0].version, 1)
+        XCTAssertEqual(s.grimoireOccurrences(in: range).map(\.id), [old.id])
+        XCTAssertFalse(s.data.grimoire.occurrences[0].superseded)
+    }
+    @MainActor func testWeekStartChangeKeepsEarnedQuotaUntilOriginalBoundary() throws {
+        let s = store(), p = practice(.weeklyQuota)
+        let original = try occurrence(s, practice: p)
+        _ = try s.recordAction(occurrenceID: original.id, kind: .complete, sessionID: UUID(), requestID: UUID(), occurredAt: date(), now: date())
+        var changed = s.data.grimoire; changed.settings.weekStartsOn = 1
+        try s.commitGrimoire(changed, now: date("2024-01-03T12:00:00Z"))
+        let thisWeek = s.grimoireOccurrences(in: DateInterval(start: date("2024-01-03T00:00:00Z"), end: date("2024-01-04T00:00:00Z")), now: date("2024-01-03T12:00:00Z"))
+        XCTAssertEqual(thisWeek.map(\.id), [original.id]); XCTAssertEqual(s.sessionCount(for: thisWeek[0]), 1)
+        let next = s.grimoireOccurrences(in: DateInterval(start: date("2024-01-08T00:00:00Z"), end: date("2024-01-09T00:00:00Z")), now: date("2024-01-08T12:00:00Z"))
+        XCTAssertEqual(next.count, 1); XCTAssertEqual(next[0].availableAt, date("2024-01-08T00:00:00Z"))
+        XCTAssertEqual(next[0].windowEnd, LocalDay(year: 2024, month: 1, day: 14)); XCTAssertEqual(s.sessionCount(for: next[0]), 0)
+    }
+    @MainActor func testWeekStartChangeEstablishesOldPeriodBeforeAnyAction() throws {
+        let s = store(), p = practice(.weeklyQuota); try s.activatePractice(p)
+        XCTAssertTrue(s.data.grimoire.occurrences.isEmpty)
+        var changed = s.data.grimoire; changed.settings.weekStartsOn = 1
+        try s.commitGrimoire(changed, now: date("2024-01-03T12:00:00Z"))
+        let current = try XCTUnwrap(s.data.grimoire.occurrences.first)
+        XCTAssertEqual(current.windowStart, LocalDay(year: 2024, month: 1, day: 1))
+        let rows = s.grimoireOccurrences(in: DateInterval(start: date("2024-01-03T00:00:00Z"), end: date("2024-01-04T00:00:00Z")))
+        XCTAssertEqual(rows.map(\.id), [current.id]); XCTAssertEqual(s.sessionCount(for: current), 0)
+    }
+    @MainActor func testActionIndexInvalidatesAfterCorrectionAndReopen() throws {
+        let s = store(), row = try occurrence(s)
+        let action = try s.recordAction(occurrenceID: row.id, kind: .complete, sessionID: UUID(), requestID: UUID(), occurredAt: date(), now: date())
+        XCTAssertEqual(s.occurrenceStatus(row), .completed)
+        let before = s.grimoireQueryCache.actionIndexBuilds
+        XCTAssertEqual(s.sessionCount(for: row), 1); XCTAssertEqual(s.grimoireQueryCache.actionIndexBuilds, before)
+        try s.undoAction(action.id, now: date())
+        XCTAssertEqual(s.occurrenceStatus(row), .unrecorded); XCTAssertEqual(s.sessionCount(for: row), 0)
+        XCTAssertEqual(s.grimoireQueryCache.actionIndexBuilds, before + 1)
+        XCTAssertEqual(AppStore(directory: s.directory).sessionCount(for: row), 0)
+    }
+    @MainActor func testProjectionOverflowIsDisclosedAndCannotSilentlyMaterializePartialHistory() throws {
+        let s = store(); var p = practice()
+        p.schedule.startDate = LocalDay(year: 1900, month: 1, day: 1); p.schedule.policy = .persist
+        try s.activatePractice(p)
+        let range = DateInterval(start: date("2024-01-01T00:00:00Z"), end: date("2024-01-02T00:00:00Z"))
+        let report = s.grimoireProjection(in: range)
+        XCTAssertTrue(report.truncated); XCTAssertFalse(report.warnings.isEmpty); XCTAssertEqual(report.occurrences.count, 20_000)
+        XCTAssertThrowsError(try s.materializeOccurrences(in: range)); XCTAssertTrue(s.data.grimoire.occurrences.isEmpty)
+    }
+    @MainActor func testSpecialtySavesKeepCreationAdvanceUpdatedAndNormalizeInvocationArchive() throws {
+        let s = store(), original = date("2020-01-01T00:00:00Z")
+        var goal = Invocation(title: "Goal", createdAt: original, updatedAt: original)
+        var spell = Spell(title: "Method", createdAt: original, updatedAt: original)
+        var enchantment = Enchantment(title: "Arrangement", createdAt: original, updatedAt: original)
+        var asset = CareAsset(name: "Asset", createdAt: original, updatedAt: original)
+        var arcana = ArcanaRecord(title: "Record", createdAt: original, updatedAt: original)
+        var echo = Echo(title: "Comparison", createdAt: original, updatedAt: original)
+        try s.saveInvocation(goal); try s.saveSpell(spell); try s.saveEnchantment(enchantment); try s.saveAsset(asset); try s.saveArcana(arcana); try s.saveEcho(echo)
+        goal.createdAt = date(); goal.status = "Archived"; spell.createdAt = date(); enchantment.createdAt = date(); asset.createdAt = date(); arcana.createdAt = date(); echo.createdAt = date()
+        try s.saveInvocation(goal); try s.saveSpell(spell); try s.saveEnchantment(enchantment); try s.saveAsset(asset); try s.saveArcana(arcana); try s.saveEcho(echo)
+        let v = s.data.grimoire
+        XCTAssertEqual([v.invocations[0].createdAt, v.spells[0].createdAt, v.enchantments[0].createdAt, v.assets[0].createdAt, v.arcana[0].createdAt, v.echoes[0].createdAt], Array(repeating: original, count: 6))
+        for updated in [v.invocations[0].updatedAt, v.spells[0].updatedAt, v.enchantments[0].updatedAt, v.assets[0].updatedAt, v.arcana[0].updatedAt, v.echoes[0].updatedAt] { XCTAssertGreaterThan(updated, original) }
+        XCTAssertTrue(v.invocations[0].archived); XCTAssertEqual(v.invocations[0].status, "Archived")
+        goal.archived = false; goal.status = "Active"; try s.saveInvocation(goal); XCTAssertFalse(s.data.grimoire.invocations[0].archived)
     }
 }

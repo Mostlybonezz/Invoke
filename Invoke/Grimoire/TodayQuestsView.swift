@@ -11,7 +11,7 @@ struct TodayView: View {
     private var settings: GrimoireSettings { store.data.grimoire.settings }
     private var calendar: Calendar { GrimoirePresentation.calendar(settings) }
     private var day: DateInterval { calendar.dateInterval(of: .day, for: now)! }
-    private var rows: [PracticeOccurrence] { store.grimoireOccurrences(in: DateInterval(start: day.start, end: calendar.date(byAdding: .month, value: 1, to: day.end)!), now: now) }
+    private var projection: GrimoireProjection { store.grimoireProjection(in: DateInterval(start: day.start, end: calendar.date(byAdding: .month, value: 1, to: day.end)!), now: now) }
     private func unresolved(_ item: PracticeOccurrence) -> Bool { ![.completed, .skipped].contains(store.occurrenceStatus(item)) }
     private func attention(in rows: [PracticeOccurrence]) -> [PracticeOccurrence] {
         rows.filter { item in
@@ -40,10 +40,11 @@ struct TodayView: View {
         }
     }
     var body: some View {
-        let rows = self.rows
-        let attention = attention(in: rows)
-        let today = today(in: rows, attention: attention)
-        let daily = daily(in: rows)
+        let projection = self.projection
+        let rows = projection.occurrences
+        let attention = self.attention(in: rows)
+        let today = self.today(in: rows, attention: attention)
+        let daily = self.daily(in: rows)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .firstTextBaseline) {
@@ -54,6 +55,7 @@ struct TodayView: View {
                     Spacer()
                     Button { adding = true } label: { Image(systemName: "plus").frame(width: 44, height: 44) }.accessibilityLabel("Add quest or ritual").accessibilityIdentifier("today-add-quest")
                 }
+                ForEach(projection.warnings, id: \.self) { warning in Label(warning, systemImage: "exclamationmark.triangle").font(.footnote) }
                 if !attention.isEmpty {
                     DisclosureGroup(isExpanded: $allAttention) {
                         ForEach(attention) { OccurrenceRow(occurrence: $0) }
@@ -81,6 +83,10 @@ struct TodayView: View {
                 let reviews = store.data.grimoire.invocations.filter { !$0.archived && $0.reviewDate != nil }.sorted { $0.reviewDate! < $1.reviewDate! }
                 ForEach(Array(reviews.prefix(2))) { invocation in
                     NavigationLink { InvocationDetailView(invocationID: invocation.id) } label: { Label("Review \(invocation.title) · \(invocation.reviewDate!.formatted(date: .abbreviated, time: .omitted))", systemImage: "sparkles") }
+                }
+                let arrangementReviews = store.data.grimoire.enchantments.filter { !$0.archived && $0.reviewDate.map { $0 < calendar.date(byAdding: .month, value: 1, to: now)! } == true }.sorted { $0.reviewDate! < $1.reviewDate! }
+                ForEach(Array(arrangementReviews.prefix(3))) { enchantment in
+                    NavigationLink { EnchantmentEditorView(draft: enchantment) } label: { Label("Review arrangement: \(enchantment.title) · \(enchantment.reviewDate!.formatted(date: .abbreviated, time: .omitted))", systemImage: "sparkles.rectangle.stack") }
                 }
                 NavigationLink { ChronicleView() } label: { Label("Reflect in the Chronicle", systemImage: "square.and.pencil") }
                 if settings.recognitionEnabled {
@@ -122,7 +128,7 @@ struct QuestsView: View {
     init(initialPeriod: String = "Today") { _period = State(initialValue: initialPeriod) }
     private var range: DateInterval {
         let calendar = GrimoirePresentation.calendar(store.data.grimoire.settings), now = Date()
-        if period == "Custom" { return DateInterval(start: min(customStart, customEnd), end: max(customEnd, customStart.addingTimeInterval(1))) }
+        if period == "Custom" { return DateInterval(start: calendar.startOfDay(for: min(customStart, customEnd)), end: calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: max(customStart, customEnd)))!) }
         let component: Calendar.Component = period == "Week" ? .weekOfYear : period == "Month" ? .month : period == "Quarter" ? .quarter : period == "Year" ? .year : .day
         return calendar.dateInterval(of: component, for: now)!
     }
@@ -141,6 +147,7 @@ struct QuestsView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 Picker("Time horizon", selection: $period) { ForEach(["Today", "Week", "Month", "Quarter", "Year", "Custom"], id: \.self) { Text($0).tag($0) } }.pickerStyle(.menu)
+                ForEach(store.grimoireProjection(in: range).warnings, id: \.self) { warning in Label(warning, systemImage: "exclamationmark.triangle").font(.footnote) }
                 if period == "Custom" { DatePicker("From", selection: $customStart, displayedComponents: .date); DatePicker("Through", selection: $customEnd, displayedComponents: .date) }
                 DisclosureGroup("Filters") {
                     Picker("Discipline", selection: $discipline) { Text("All disciplines").tag("all"); ForEach(Discipline.allCases) { Text($0.title).tag($0.rawValue) } }

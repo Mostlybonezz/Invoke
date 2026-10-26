@@ -12,6 +12,7 @@ struct InvokeApp: App {
             let prefix = "--ui-testing-session="
             let supplied = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(prefix) }).flatMap { UUID(uuidString: String($0.dropFirst(prefix.count))) }
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("InvokeUITests-\((supplied ?? UUID()).uuidString)")
+            try? AppStore.prepareLivingGrimoireUITestStorage(at: directory)
             let testStore = AppStore(directory: directory)
             testStore.installLivingGrimoireUITestFixtureIfRequested()
             _store = StateObject(wrappedValue: testStore)
@@ -43,6 +44,10 @@ struct InvokeRootView: View {
     @Environment(\.invokeTheme) private var theme
     @State private var tab = 0
     var body: some View {
+        Group {
+        if store.storageRecoveryRequired {
+            NavigationStack { StorageRecoveryView() }
+        } else {
         TabView(selection: $tab) {
             NavigationStack { TodayView() }.tabItem { Label("Today", systemImage: "sparkle") }.tag(0)
             NavigationStack { QuestsView() }.tabItem { Label("Quests", systemImage: "checklist") }.tag(1)
@@ -50,17 +55,34 @@ struct InvokeRootView: View {
             NavigationStack { InvocationsView() }.tabItem { Label("Invocations", systemImage: "sparkles") }.tag(3)
             NavigationStack { ChronicleView() }.tabItem { Label("Chronicle", systemImage: "clock.arrow.circlepath") }.tag(4)
         }
+        }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if store.saveState != "Saved on this iPhone" {
                 HStack(spacing: 8) { Image(systemName: store.errorMessage == nil ? "arrow.triangle.2.circlepath" : "exclamationmark.triangle"); Text(store.saveState).font(.caption); if store.errorMessage != nil { Button("Retry saving") { store.flush() }.font(.caption) } }.padding(8).frame(maxWidth: .infinity).foregroundStyle(theme.text).background(theme.surface)
             }
         }
-        .sheet(isPresented: Binding(get: { !store.data.preferences.onboardingComplete || !store.data.grimoire.upgradeIntroductionSeen }, set: { _ in })) {
+        .sheet(isPresented: Binding(get: { !store.storageRecoveryRequired && (!store.data.preferences.onboardingComplete || !store.data.grimoire.upgradeIntroductionSeen) }, set: { _ in })) {
             NavigationStack { LivingSetupView(isUpgrade: store.data.preferences.onboardingComplete) }.interactiveDismissDisabled().environment(\.invokeTheme, theme).preferredColorScheme(theme.scheme)
         }
         .alert("Your writing matters", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("OK") { store.errorMessage = nil }
         } message: { Text(store.errorMessage ?? "") }
+    }
+}
+
+struct StorageRecoveryView: View {
+    @EnvironmentObject private var store: AppStore
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Label("Your collection needs attention", systemImage: "externaldrive.badge.exclamationmark").font(.title2).fontDesign(.serif)
+                Text("Invoke could not safely open the saved collection. The existing files have been preserved and ordinary writes are blocked to protect them.")
+                Text("Open recovery to review a retained copy or choose a complete backup from Files. The backup is validated before restoration. If no usable backup is available, keep this installation and its data container for recovery.")
+                NavigationLink { SettingsView() } label: { Label("Open backup recovery", systemImage: "arrow.clockwise.icloud") }.buttonStyle(.borderedProminent).accessibilityIdentifier("storage-open-recovery")
+                Text("Do not delete the app or its LiveContainer data container to resolve this screen.").font(.footnote)
+            }.padding(24)
+        }.navigationTitle("Recovery").invokeScreen().accessibilityIdentifier("storage-recovery")
     }
 }
 

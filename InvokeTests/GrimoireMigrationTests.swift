@@ -53,6 +53,8 @@ final class GrimoireMigrationTests: XCTestCase {
         let recoveryBefore = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("recovery"), includingPropertiesForKeys: nil).count
         let second = AppStore(directory: root)
         XCTAssertNil(second.errorMessage)
+        XCTAssertEqual(second.lastRecoveryBackupURL, first.lastRecoveryBackupURL)
+        XCTAssertEqual(second.recoveryBackupURLs.count, 1)
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("CURRENT")), pointer)
         XCTAssertEqual(second.data.stories.map(\.id), first.data.stories.map(\.id))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("recovery"), includingPropertiesForKeys: nil).count, recoveryBefore)
@@ -73,9 +75,22 @@ final class GrimoireMigrationTests: XCTestCase {
         try corrupt.write(to: root.appendingPathComponent("generations/\(old)/data.json"))
         let store = AppStore(directory: root)
         XCTAssertNotNil(store.errorMessage)
+        XCTAssertTrue(store.storageRecoveryRequired)
+        XCTAssertThrowsError(try store.makeBackup())
         XCTAssertThrowsError(try store.activatePractice(PracticeDefinition(title: "Must not overwrite")))
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("CURRENT"), encoding: .utf8), old)
         XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("generations/\(old)/data.json")), corrupt)
+    }
+    @MainActor func testRecoveryDiscoveryExcludesDamagedFilesAndNeverRestoresAutomatically() throws {
+        let root = try directory(); _ = try writeLegacy(SampleData.collection(), at: root)
+        let first = AppStore(directory: root)
+        let recovery = try XCTUnwrap(first.lastRecoveryBackupURL)
+        try Data("damaged portable file".utf8).write(to: root.appendingPathComponent("recovery/Damaged.invoke"))
+        let pointer = try Data(contentsOf: root.appendingPathComponent("CURRENT"))
+        let reopened = AppStore(directory: root)
+        XCTAssertEqual(reopened.recoveryBackupURLs, [recovery])
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("CURRENT")), pointer)
+        XCTAssertEqual(reopened.data.schemaVersion, 2)
     }
     @MainActor func testOldPortableBackupIsAcceptedAndRestoredAsSchemaTwo() throws {
         var original = SampleData.collection(); original.schemaVersion = 1

@@ -72,7 +72,7 @@ final class LivingGrimoireUITests: XCTestCase {
         XCTAssertTrue(element("quest-complete").exists, "Undo must persist and restore the available action.")
         tap(app.buttons["View recorded history"])
         XCTAssertTrue(element("chronicle-list").waitForExistence(timeout: 5))
-        let correction = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Correction")).firstMatch
+        let correction = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "chronicle-action:", "Correction")).firstMatch
         reveal(correction)
         screenshot("21-Chronicle-correction")
     }
@@ -85,7 +85,7 @@ final class LivingGrimoireUITests: XCTestCase {
         let field = element("invocation-title")
         tap(field); field.typeText(intention)
         tap(element("invocation-save"), upwards: false)
-        tap(app.staticTexts[intention])
+        tap(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", intention)).firstMatch)
         XCTAssertEqual(element("invocation-action-count").label, "0 linked actions recorded")
         tap(element("invocation-add-practice")); savePractice(title: practice)
         tap(app.buttons[practice])
@@ -99,7 +99,7 @@ final class LivingGrimoireUITests: XCTestCase {
 
         relaunch()
         tap(app.tabBars.buttons["Invocations"])
-        tap(app.staticTexts[intention])
+        tap(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", intention)).firstMatch)
         XCTAssertEqual(element("invocation-action-count").label, "1 linked actions recorded")
         XCTAssertTrue(app.buttons[practice].exists)
         screenshot("23-Invocation-reopened")

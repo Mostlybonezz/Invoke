@@ -30,7 +30,10 @@ struct SettingsView: View {
                 Button { exportBackup() } label: { Label("Export complete backup", systemImage: "square.and.arrow.up") }
                 Button { importing = true } label: { Label(validating ? "Validating backup…" : "Restore from backup", systemImage: "square.and.arrow.down") }.disabled(validating)
                 if !exportMessage.isEmpty { Text(exportMessage).font(.footnote).foregroundStyle(theme.secondary) }
-                if let url = store.lastRecoveryBackupURL { ShareLink(item: url) { Label("Save pre-restore recovery copy", systemImage: "arrow.uturn.backward") } }
+                if let url = store.lastRecoveryBackupURL {
+                    ShareLink(item: url) { Label("Save retained recovery copy", systemImage: "arrow.uturn.backward") }
+                    Button("Review retained recovery copy") { validateImport(url) }.accessibilityIdentifier("recovery-review-copy")
+                }
                 Button("Retry saving now") { store.flush() }
             }
             Section("Example collection") {

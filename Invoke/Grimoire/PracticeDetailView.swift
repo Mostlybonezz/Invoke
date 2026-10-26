@@ -82,9 +82,10 @@ struct OccurrenceRow: View {
                         Spacer()
                         if occurrence.requiredSessions > 1 { Text("\(store.sessionCount(for: occurrence))/\(occurrence.requiredSessions) sessions") }
                     }.font(.subheadline)
-                    if let deadline = occurrence.hardDeadline { Label("Deadline \(deadline.formatted(date: .abbreviated, time: .shortened))", systemImage: "exclamationmark.circle").font(.caption) }
-                    else if let due = occurrence.dueAt { Text("Due \(due.formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(theme.secondary) }
-                    if let deferred = occurrence.deferredUntil { Text("Rescheduled to \(deferred.formatted(date: .abbreviated, time: .shortened))").font(.caption) }
+                    if let deadline = occurrence.hardDeadline { Label("Deadline \(GrimoireHistoryDate.string(deadline, zoneID: occurrence.timeZoneID, includeTime: true))", systemImage: "exclamationmark.circle").font(.caption) }
+                    else if let due = occurrence.dueAt { Text("Due \(GrimoireHistoryDate.string(due, zoneID: occurrence.timeZoneID))").font(.caption).foregroundStyle(theme.secondary) }
+                    if let deferred = occurrence.deferredUntil { Text("Rescheduled to \(GrimoireHistoryDate.string(deferred, zoneID: occurrence.timeZoneID, includeTime: true))").font(.caption) }
+                    if occurrence.timeZoneID != TimeZone.current.identifier { Text(occurrence.timeZoneID).font(.caption2).foregroundStyle(theme.secondary) }
                 }.foregroundStyle(theme.text)
             }
         }.buttonStyle(.plain).accessibilityIdentifier("quest-row-\(occurrence.id)")
@@ -120,13 +121,11 @@ struct OccurrenceDetailView: View {
                 SectionEyebrow(text: "A real action, honestly recorded")
                 Text(current.title).font(.largeTitle).fontDesign(.serif)
                 HStack { StatusPill(text: status.title); if current.requiredSessions > 1 { Text("\(store.sessionCount(for: current))/\(current.requiredSessions) sessions this period") } }
-                if let practice {
-                    GrimoireDetailText(title: "Instructions", text: practice.instructions)
-                    GrimoireDetailText(title: "Trigger", text: practice.context)
-                    GrimoireDetailText(title: "Materials", text: practice.materials)
-                    if !practice.smallerVersion.isEmpty { GrimoireDetailText(title: "Smaller version", text: practice.smallerVersion) }
-                }
-                if let deadline = current.hardDeadline { Label("Hard deadline: \(deadline.formatted())", systemImage: "exclamationmark.circle") }
+                GrimoireDetailText(title: "Instructions", text: current.instructions)
+                GrimoireDetailText(title: "Trigger", text: current.context)
+                GrimoireDetailText(title: "Materials", text: current.materials)
+                GrimoireDetailText(title: "Smaller version", text: current.smallerVersion)
+                if let deadline = current.hardDeadline { Label("Hard deadline: \(GrimoireHistoryDate.string(deadline, zoneID: current.timeZoneID, includeTime: true))", systemImage: "exclamationmark.circle") }
                 if practice?.schedule.kind == .unscheduled {
                     Text("Open practice · no scheduled deadline").font(.caption).foregroundStyle(theme.secondary)
                 } else {
@@ -165,8 +164,8 @@ struct OccurrenceDetailView: View {
                                 .disabled(!fullSteps).accessibilityIdentifier("quest-complete")
                             if !fullSteps { Text("Check the steps performed, or save partial progress below.").font(.footnote) }
                         }
-                        if let practice, !practice.smallerVersion.isEmpty, status != .completed { Button("Record smaller version") { record(.smaller) }.buttonStyle(.bordered) }
-                        if sessionID != nil && status != .completed { Button("Save partial progress & notes") { record(.progress) }.buttonStyle(.bordered).accessibilityIdentifier("quest-partial") }
+                        if !current.smallerVersion.isEmpty, status != .completed { Button("Record smaller version") { record(.smaller) }.buttonStyle(.bordered) }
+                        if status != .completed { Button("Save partial progress & notes") { record(.progress) }.buttonStyle(.bordered).accessibilityIdentifier("quest-partial") }
                         if current.requiredSessions > 1 && store.sessionCount(for: current) < current.requiredSessions && latest?.kind == .complete {
                             Button("Begin a separate session") { begin(newSession: true) }.buttonStyle(.bordered)
                         }
@@ -202,7 +201,8 @@ struct OccurrenceDetailView: View {
             .onChange(of: scenePhase) { _, phase in if phase != .active { persistDraftIfNeeded() } }
     }
     private func persistDraftIfNeeded() {
-        guard sessionID != nil, canRecord, status != .completed, status != .skipped else { return }
+        guard canRecord, status != .completed, status != .skipped else { return }
+        guard sessionID != nil || !notes.isEmpty || measurement != nil else { return }
         let last = store.activeActions(for: current.id).last { $0.sessionID == sessionID && [.progress, .smaller].contains($0.kind) }
         guard (last?.notes ?? "") != notes || (last?.measurement != measurement) || (last?.measurementUnit ?? "") != measurementUnit || Set(last?.completedStepIDs ?? []) != checked else { return }
         store.presentGrimoireError { try save(.progress, request: UUID()) }

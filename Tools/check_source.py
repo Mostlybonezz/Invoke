@@ -25,6 +25,8 @@ except ImportError:
 definitions = re.findall(r'^\s*([A-F0-9]{24}) = \{ isa = ', project, re.M)
 check(len(definitions) == len(set(definitions)), 'Duplicate project object IDs')
 check(set(re.findall(r'\b[A-F0-9]{24}\b', project)).issubset(set(definitions)), 'Unresolved project object ID')
+for path in (ROOT/'Tools').rglob('*.sh'):
+    check(b'\r\n' not in path.read_bytes(), f'Shell script requires LF line endings: {path.relative_to(ROOT)}')
 swift = sorted((ROOT/'Invoke').rglob('*.swift')) + sorted((ROOT/'InvokeTests').rglob('*.swift')) + sorted((ROOT/'InvokeUITests').rglob('*.swift'))
 metal = list((ROOT/'Invoke').rglob('*.metal'))
 for path in swift + metal:

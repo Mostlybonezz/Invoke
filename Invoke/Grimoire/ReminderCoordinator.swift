@@ -186,9 +186,16 @@ final class ReminderCoordinator: ObservableObject {
         do {
             let prefix = try installationNamespace(directory: directory)
             authorization = await gateway.settings()
-            let pending = await gateway.pendingIdentifiers().filter { $0.hasPrefix(prefix) }
+            let allPending = await gateway.pendingIdentifiers()
+            let pending = allPending.filter { $0.hasPrefix(prefix) }
+            let foreignCount = allPending.count - pending.count
             let allowed = authorization == .authorized || authorization == .provisional || authorization == .ephemeral
-            let plan = allowed ? ReminderPlanner.plan(data: data, namespace: prefix, now: now) : []
+            let candidates = allowed ? ReminderPlanner.plan(data: data, namespace: prefix, now: now) : []
+            // LiveContainer may share its notification host with other guests.
+            // Budget conservatively against existing foreign requests instead
+            // of filling a separate 48-request queue and displacing them.
+            let availableSlots = max(0, ReminderPlanner.maximumRequests - foreignCount)
+            let plan = Array(candidates.prefix(availableSlots))
             let desired = Set(plan.map(\.id))
             gateway.remove(identifiers: pending.filter { !desired.contains($0) })
             scheduledCount = 0
@@ -199,6 +206,9 @@ final class ReminderCoordinator: ObservableObject {
                 statusMessage = "Device notifications are unavailable. Today still shows in-app reminders. Check permission or LiveContainer's Fix Local Notifications setting."
             } else {
                 statusMessage = "\(scheduledCount) upcoming reminders scheduled. Invoke schedules up to 48 requests within 30 days; reopen it to refresh the horizon. Device and LiveContainer settings control delivery."
+                if candidates.count > availableSlots {
+                    statusMessage += " Other notifications already use this host, so Invoke has reserved their capacity. Remaining plans are visible in Today."
+                }
             }
         } catch {
             statusMessage = "Some device reminders could not be updated. Your plans remain in Invoke. \(error.localizedDescription)"

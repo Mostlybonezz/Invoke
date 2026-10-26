@@ -70,10 +70,27 @@ struct InvocationEditorView: View {
                 Picker("Status", selection: $draft.status) { ForEach(["Active", "Paused", "Completed", "Revised", "Archived"], id: \.self) { Text($0).tag($0) } }
                 GrimoireTextField(label: "Notes", text: $draft.notes)
             }
+            Section {
+                DisclosureGroup("Links to your original collection") {
+                    Picker("Original story (optional)", selection: $draft.legacyStoryID) {
+                        Text("None").tag(nil as UUID?)
+                        ForEach(store.data.stories) { story in
+                            Text(story.title + (story.archived ? " · Archived" : "")).tag(Optional(story.id))
+                        }
+                    }.accessibilityIdentifier("invocation-original-story")
+                    Picker("Original manifestation (optional)", selection: $draft.legacyEntryID) {
+                        Text("None").tag(nil as UUID?)
+                        ForEach(store.data.entries.filter { $0.kind == .manifestation || $0.id == draft.legacyEntryID }) { entry in
+                            Text(entry.title + (entry.archived ? " · Archived" : "")).tag(Optional(entry.id))
+                        }
+                    }.accessibilityIdentifier("invocation-original-manifestation")
+                    Text("These links preserve the original writing and history alongside this direction. No achievement is inferred from linking a record.").font(.footnote)
+                }
+            }
         }.navigationTitle("Shape an Invocation").navigationBarTitleDisplayMode(.inline).invokeScreen()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { store.presentGrimoireError { try store.saveInvocation(draft); dismiss() } }.disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("invocation-save") }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { store.presentGrimoireError { draft.archived = draft.status == "Archived"; try store.saveInvocation(draft); dismiss() } }.disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("invocation-save") }
             }
     }
 }
@@ -127,7 +144,7 @@ struct InvocationDetailView: View {
                             VStack(alignment: .leading) { Text(revision.changedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption); Text(revision.summary) }.padding(.vertical, 6)
                         }
                     }
-                    Button(invocation.archived ? "Restore Invocation" : "Archive Invocation") { var changed = invocation; changed.archived.toggle(); store.presentGrimoireError { try store.saveInvocation(changed) } }
+                    Button(invocation.archived ? "Restore Invocation" : "Archive Invocation") { var changed = invocation; changed.archived.toggle(); changed.status = changed.archived ? "Archived" : "Active"; store.presentGrimoireError { try store.saveInvocation(changed) } }
                 } else { ContentUnavailableView("Invocation unavailable", systemImage: "sparkles") }
             }.padding(20)
         }.navigationTitle("Invocation").navigationBarTitleDisplayMode(.inline).invokeScreen()

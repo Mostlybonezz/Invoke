@@ -142,6 +142,22 @@ final class ReminderCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.statusMessage.contains("could not be updated"))
         XCTAssertEqual(coordinator.scheduledCount, 0)
     }
+    func testSharedHostCapacityPreservesForeignGuestRequests() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("InvokeReminderTests-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gateway = FakeNotificationGateway()
+        gateway.pending = (0..<46).map { "another.guest.reminder.\($0)" }
+        var data = fixture()
+        let original = data.practices[0]
+        data.practices = (0..<6).map { _ in var value = original; value.id = UUID(); return value }
+        let coordinator = ReminderCoordinator(gateway: gateway)
+        await coordinator.reconcile(data: data, directory: directory, now: instant("2026-10-26T12:00:00Z"))
+        XCTAssertEqual(gateway.added.count, 2)
+        XCTAssertEqual(coordinator.scheduledCount, 2)
+        XCTAssertTrue(gateway.removed.isEmpty)
+        XCTAssertTrue(coordinator.statusMessage.contains("reserved their capacity"))
+    }
 }
 
 @MainActor

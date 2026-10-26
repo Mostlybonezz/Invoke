@@ -56,7 +56,7 @@ final class ScheduleEngineTests: XCTestCase {
         XCTAssertEqual(project(value).map { $0.windowStart.description }, ["2024-01-29"])
     }
     func testAnnualFebruary29HasExplicitFebruary28Fallback() {
-        let value = practice(.annual, start: LocalDay(year: 2024, month: 2, day: 29))
+        var value = practice(.annual, start: LocalDay(year: 2024, month: 2, day: 29)); value.schedule.dayOfMonth = 29
         XCTAssertEqual(project(value, "2024-01-01T00:00:00Z", "2027-01-01T00:00:00Z").map { $0.windowStart.description },
                        ["2024-02-29", "2025-02-28", "2026-02-28"])
     }
@@ -155,5 +155,33 @@ final class ScheduleEngineTests: XCTestCase {
         let value = practice(.daily)
         let rows = ScheduleEngine.occurrences(for: value, in: DateInterval(start: date("2024-01-01T00:00:00Z"), end: date("2090-01-01T00:00:00Z")), settings: settings(), limit: 30)
         XCTAssertEqual(rows.count, 30)
+    }
+    func testProjectionReportsOverflowRatherThanImplyingCompleteResults() {
+        let value = practice(.daily)
+        let range = DateInterval(start: date("2024-01-01T00:00:00Z"), end: date("2024-02-01T00:00:00Z"))
+        let capped = ScheduleEngine.projection(for: value, in: range, settings: settings(), limit: 30)
+        XCTAssertEqual(capped.occurrences.count, 30); XCTAssertTrue(capped.truncated)
+        let exact = ScheduleEngine.projection(for: value, in: range, settings: settings(), limit: 31)
+        XCTAssertEqual(exact.occurrences.count, 31); XCTAssertFalse(exact.truncated)
+    }
+    func testWeeklyChosenDeadlineIsOnFinalDayAndAfterMidweekActivation() {
+        var value = practice(.weeklyQuota, start: LocalDay(year: 2024, month: 1, day: 3))
+        value.schedule.deadlineHour = 18; value.schedule.deadlineMinute = 30; value.schedule.hardDeadline = true
+        let row = project(value, "2024-01-03T00:00:00Z", "2024-01-04T00:00:00Z")[0]
+        XCTAssertEqual(row.availableAt, date("2024-01-03T00:00:00Z"))
+        XCTAssertEqual(row.hardDeadline, date("2024-01-07T18:30:00Z"))
+        XCTAssertGreaterThan(row.hardDeadline!, row.availableAt)
+    }
+    func testAnnualUsesExplicitDayOfMonthRatherThanHiddenAnchorDay() {
+        var value = practice(.annual, start: LocalDay(year: 2024, month: 2, day: 1)); value.schedule.dayOfMonth = 20
+        XCTAssertEqual(project(value, "2024-01-01T00:00:00Z", "2026-01-01T00:00:00Z").map { $0.windowStart.description }, ["2024-02-20", "2025-02-20"])
+    }
+    func testAfterCompletionOverdueProjectionKeepsTimedIdentityAndDeadline() {
+        var value = practice(.afterCompletion)
+        value.schedule.slots = [TimeSlot(hour: 8)]; value.schedule.deadlineHour = 17; value.schedule.hardDeadline = true
+        let original = project(value, "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z")[0]
+        let overdue = project(value, "2024-02-01T00:00:00Z", "2024-02-02T00:00:00Z")[0]
+        XCTAssertEqual(original.id, overdue.id); XCTAssertEqual(original.availableAt, overdue.availableAt)
+        XCTAssertEqual(original.hardDeadline, overdue.hardDeadline)
     }
 }

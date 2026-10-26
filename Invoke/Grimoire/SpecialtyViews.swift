@@ -317,6 +317,13 @@ struct ArcanaEditorView: View {
                     Text("Sources, experiences and interpretations are distinct parts of your record. Exports include this private writing only when you choose to export your data.").font(.footnote)
                 }
                 Section("Origin and method") {
+                    Picker("Original belief (optional)", selection: $draft.legacyEntryID) {
+                        Text("None").tag(nil as UUID?)
+                        ForEach(store.data.entries.filter { $0.kind == .belief || $0.id == draft.legacyEntryID }) { entry in
+                            Text(entry.title + (entry.archived ? " · Archived" : "")).tag(Optional(entry.id))
+                        }
+                    }.accessibilityIdentifier("arcana-original-belief")
+                    Text("A link keeps the original belief and its revisions available alongside this record.").font(.footnote)
                     GrimoireTextField(label: "Origin or tradition", text: $draft.origin)
                     GrimoireTextField(label: "Source, quotation or reference", text: $draft.source)
                     GrimoireTextField(label: "Purpose", text: $draft.purpose)

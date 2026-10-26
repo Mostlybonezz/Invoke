@@ -251,6 +251,13 @@ struct CodexPreviewView: View {
                 DisclosureGroup("Source and complete original wording") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(template.provenance).font(.footnote)
+                        ForEach(template.sourceLinks, id: \.self) { reference in
+                            if let url = URL(string: reference), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                                Link(reference, destination: url).font(.footnote)
+                            } else {
+                                Text(reference).font(.footnote).textSelection(.enabled)
+                            }
+                        }
                         ForEach(Array(template.sourceIDs.enumerated()), id: \.offset) { index, sourceID in
                             GrimoireDetailText(title: sourceID, text: template.sourceTexts[index])
                         }
