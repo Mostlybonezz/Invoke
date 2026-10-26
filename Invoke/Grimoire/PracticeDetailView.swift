@@ -92,6 +92,9 @@ struct OccurrenceRow: View {
                         Spacer()
                         if occurrence.requiredSessions > 1 { Text("\(store.sessionCount(for: occurrence))/\(occurrence.requiredSessions) sessions") }
                     }.font(.subheadline)
+                    if occurrence.slotKey != "day" {
+                        Label("Available \(GrimoireHistoryDate.string(occurrence.availableAt, zoneID: occurrence.timeZoneID, includeTime: true))", systemImage: "clock").font(.caption).foregroundStyle(theme.secondary)
+                    }
                     if let deadline = occurrence.hardDeadline { Label("Deadline \(GrimoireHistoryDate.string(deadline, zoneID: occurrence.timeZoneID, includeTime: true))", systemImage: "exclamationmark.circle").font(.caption) }
                     else if let due = occurrence.dueAt { Text("Due \(GrimoireHistoryDate.string(due, zoneID: occurrence.timeZoneID))").font(.caption).foregroundStyle(theme.secondary) }
                     if let deferred = occurrence.deferredUntil { Text("Rescheduled to \(GrimoireHistoryDate.string(deferred, zoneID: occurrence.timeZoneID, includeTime: true))").font(.caption) }
@@ -142,7 +145,11 @@ struct OccurrenceDetailView: View {
                     let cal = ScheduleEngine.calendar(zone: TimeZone(identifier: current.timeZoneID) ?? .current, weekStart: store.data.grimoire.settings.weekStartsOn)
                     let start = ScheduleEngine.date(current.windowStart, in: cal) ?? current.availableAt
                     let end = ScheduleEngine.date(current.windowEnd, in: cal).flatMap { cal.date(byAdding: .day, value: -1, to: $0) } ?? start
-                    Text("\(start.formatted(date: .abbreviated, time: .omitted)) – \(end.formatted(date: .abbreviated, time: .omitted)) · \(current.timeZoneID)").font(.caption).foregroundStyle(theme.secondary)
+                    Text("\(GrimoireHistoryDate.string(start, zoneID: current.timeZoneID)) – \(GrimoireHistoryDate.string(end, zoneID: current.timeZoneID)) · \(current.timeZoneID)").font(.caption).foregroundStyle(theme.secondary)
+                    Label("Available \(GrimoireHistoryDate.string(current.availableAt, zoneID: current.timeZoneID, includeTime: current.slotKey != "day"))", systemImage: "clock").font(.caption)
+                    if current.hardDeadline == nil, let due = current.dueAt {
+                        Text("Due \(GrimoireHistoryDate.string(due, zoneID: current.timeZoneID, includeTime: true))").font(.caption)
+                    }
                 }
                 SavedFeedback(message: feedback)
                 if canRecord && status != .skipped {

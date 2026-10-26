@@ -15,7 +15,7 @@ struct SpellEditorView: View {
                     GrimoireTextField(label: "Purpose", text: $draft.purpose)
                 }
                 Section("Method and provenance") {
-                    GrimoireTextField(label: "Steps or method", text: $draft.method, lines: 5)
+                    GrimoireTextField(label: "Steps or method", text: $draft.method, lines: 5, identifier: "spell-method")
                     GrimoireTextField(label: "Origin, source or reference", text: $draft.source)
                     GrimoireTextField(label: "Your notes", text: $draft.notes)
                 }
@@ -391,8 +391,8 @@ struct EchoEditorView: View {
             Group {
                 Section("A comparison with context") {
                     TextField("Title", text: $draft.title).accessibilityIdentifier("echo-title")
-                    GrimoireTextField(label: "First source or tradition", text: $draft.sourceA)
-                    GrimoireTextField(label: "Second source or tradition", text: $draft.sourceB)
+                    GrimoireTextField(label: "First source or tradition", text: $draft.sourceA, identifier: "echo-source-a")
+                    GrimoireTextField(label: "Second source or tradition", text: $draft.sourceB, identifier: "echo-source-b")
                     Text("Keep links, references or quotations with their attribution. Similarity does not require equivalence.").font(.footnote)
                 }
                 Section("What connects and what differs") {

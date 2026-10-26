@@ -47,6 +47,7 @@ final class StorageRecoveryUITests: XCTestCase {
         reveal(findCopies, app: app); findCopies.tap()
         let review = element("recovery-review-copy", app: app)
         reveal(review, app: app, upwards: false); review.tap()
+        XCTAssertTrue(element("recovery-review-title", app: app).waitForExistence(timeout: 10), "A validated backup must open its review before restoration.")
         let merge = app.buttons["Merge new records into my collection"]
         XCTAssertTrue(merge.waitForExistence(timeout: 10))
         XCTAssertFalse(merge.isEnabled, "Merging cannot read from a damaged collection.")

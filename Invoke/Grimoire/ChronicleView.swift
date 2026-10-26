@@ -477,10 +477,7 @@ struct ChronicleRevisionView: View {
         }
         if let list = value as? [String] { return list.joined(separator: "\n") }
         if let list = value as? [[String: Any]] {
-            return list.compactMap { row in
-                let words = [row["title"], row["text"], row["notes"], row["instructions"]].compactMap { $0 as? String }.filter { !$0.isEmpty }
-                return words.isEmpty ? nil : words.joined(separator: " · ")
-            }.joined(separator: "\n")
+            return list.compactMap { humanValue($0) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         if let dictionary = value as? [String: Any] {
             if let year = dictionary["year"] as? Int, let month = dictionary["month"] as? Int, let day = dictionary["day"] as? Int {

@@ -9,13 +9,16 @@ struct SettingsView: View {
     @State private var exporting = false
     @State private var importing = false
     @State private var validating = false
-    @State private var proposedRestore: BackupPayload?
-    @State private var reviewRestore = false
+    private struct RestoreProposal: Identifiable {
+        let id = UUID()
+        let payload: BackupPayload
+        let mergePreview: String
+    }
+    @State private var proposedRestore: RestoreProposal?
     @State private var confirmRestore = false
     @State private var removeExamples = false
     @State private var exportMessage = ""
     @State private var exportAfterReview = false
-    @State private var mergePreviewText = ""
     var body: some View {
         Form {
             Section {
@@ -71,38 +74,38 @@ struct SettingsView: View {
                 case .failure(let error): store.errorMessage = "Could not open the backup: \(error.localizedDescription)"
                 }
             }
-            .sheet(isPresented: $reviewRestore, onDismiss: {
+            .sheet(item: $proposedRestore, onDismiss: {
                 if exportAfterReview { exportAfterReview = false; exportBackup() }
-            }) {
+            }) { proposal in
+                let payload = proposal.payload
                 NavigationStack {
                     ScrollView { VStack(alignment: .leading, spacing: 22) {
-                        Text("Review this restoration").font(.largeTitle).fontDesign(.serif)
-                        if let payload = proposedRestore {
+                        Text("Review this restoration").font(.largeTitle).fontDesign(.serif).accessibilityIdentifier("recovery-review-title")
+                        Group {
                             Text("Backup from \(payload.exportedAt.formatted(date: .abbreviated, time: .shortened))")
                             Text("\(payload.data.stories.count) stories · \(payload.data.entries.count) Grimoire entries · \(payload.data.relics.count) relics · \(payload.images.count) images")
                             Text("\(payload.data.grimoire.practices.count) practices · \(payload.data.grimoire.actions.count) action records · \(payload.data.grimoire.invocations.count) Invocations · \(payload.data.grimoire.assets.count) assets")
                             Text("\(payload.data.grimoire.spells.count) Spells · \(payload.data.grimoire.enchantments.count) Enchantments · \(payload.data.grimoire.arcana.count) Arcana records · \(payload.data.grimoire.echoes.count) Echoes · \(payload.data.grimoire.revisions.count) revisions")
-                            Text(mergePreviewText).font(.footnote).foregroundStyle(theme.secondary)
+                            Text(proposal.mergePreview).font(.footnote).foregroundStyle(theme.secondary)
                             Button("Merge new records into my collection") {
-                                do { try store.mergeBackup(payload); reviewRestore = false; proposedRestore = nil; exportMessage = "Merged new records. Existing records and preferences were kept." }
+                                do { try store.mergeBackup(payload); proposedRestore = nil; exportMessage = "Merged new records. Existing records and preferences were kept." }
                                 catch { store.errorMessage = error.localizedDescription }
                             }.buttonStyle(.bordered).frame(minHeight: 44).disabled(store.storageRecoveryRequired)
                         }
                         Text("Merge adds records with new identities and keeps your current records on every identity conflict. Current preferences are kept. Replace instead restores the complete backup, including all records, history, photos, and preferences.")
                         Text("Export your current collection first. Invoke also creates a local recovery copy before replacing anything.").foregroundStyle(theme.secondary)
-                        Button("Export current collection first") { exportAfterReview = true; reviewRestore = false }.buttonStyle(.bordered).frame(minHeight: 44)
+                        Button("Export current collection first") { exportAfterReview = true; proposedRestore = nil }.buttonStyle(.bordered).frame(minHeight: 44)
                         Text("After export, choose Restore from backup again to continue.").font(.footnote).foregroundStyle(theme.secondary)
                         Button("Replace with this backup", role: .destructive) { confirmRestore = true }.buttonStyle(.borderedProminent).frame(minHeight: 44)
                     }.padding(24) }.invokeScreen()
-                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { reviewRestore = false; proposedRestore = nil } } }
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { proposedRestore = nil } } }
                         .alert("Replace your current collection?", isPresented: $confirmRestore) {
                             Button("Replace & restore", role: .destructive) {
-                                guard let payload = proposedRestore else { return }
-                                do { try store.restore(payload); reviewRestore = false; proposedRestore = nil; exportMessage = store.lastRecoveryBackupURL == nil ? "Restored. The previous local files were preserved for recovery." : "Restored. A pre-restore recovery backup is available below." }
-                                catch { reviewRestore = false; store.errorMessage = error.localizedDescription }
+                                do { try store.restore(payload); proposedRestore = nil; exportMessage = store.lastRecoveryBackupURL == nil ? "Restored. The previous local files were preserved for recovery." : "Restored. A pre-restore recovery backup is available below." }
+                                catch { proposedRestore = nil; store.errorMessage = error.localizedDescription }
                             }
                             Button("Cancel", role: .cancel) { }
-                        } message: { Text("The validated backup will replace the current collection. A recovery backup is saved first.") }
+                        } message: { Text(store.storageRecoveryRequired ? "The validated backup will replace the unreadable collection. Its original files remain available for recovery." : "The validated backup will replace the current collection. A recovery backup is saved first.") }
                 }.environment(\.invokeTheme, theme).preferredColorScheme(theme.scheme)
             }
             .confirmationDialog("Remove all example records?", isPresented: $removeExamples, titleVisibility: .visible) {
@@ -134,8 +137,8 @@ struct SettingsView: View {
                     guard size <= BackupValidation.maximumBackupBytes else { throw InvokeDataError.invalidBackup("The selected file exceeds the 512 MB limit.") }
                     return try BackupValidation.decode(Data(contentsOf: url, options: .mappedIfSafe))
                 }.value
-                mergePreviewText = store.storageRecoveryRequired ? "The current collection could not be read safely, so merge is unavailable. You can restore this validated backup while preserving the damaged generation for recovery." : try mergeSummary(payload)
-                proposedRestore = payload; reviewRestore = true
+                let mergePreview = store.storageRecoveryRequired ? "The current collection could not be read safely, so merge is unavailable. You can restore this validated backup while preserving the damaged generation for recovery." : try mergeSummary(payload)
+                proposedRestore = RestoreProposal(payload: payload, mergePreview: mergePreview)
             } catch { store.errorMessage = error.localizedDescription }
             validating = false
         }
