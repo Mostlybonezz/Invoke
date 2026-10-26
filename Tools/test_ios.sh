@@ -1,4 +1,5 @@
 #!/bin/bash
+# Keep this script in LF format for the macOS build runner.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build
