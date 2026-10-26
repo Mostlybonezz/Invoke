@@ -1,0 +1,34 @@
+name: Verify recovery and editing fixes
+on:
+  push:
+    branches: [invoke-2.0.1-release]
+    paths: [.github/workflows/targeted-verify.yml]
+permissions:
+  contents: read
+jobs:
+  targeted:
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: d915e20172b39aba02d7e93e349e1d01d905cff4
+          persist-credentials: false
+      - name: Select the iOS 27 toolchain
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR="$(python3 Tools/select_xcode.py --print-path)"
+          xcodebuild -downloadComponent MetalToolchain
+      - name: Test tied progress, backup recovery, and method editing
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR="$(python3 Tools/select_xcode.py --print-path)"
+          device="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-27-0"]; print(next(x["udid"] for x in d if x.get("isAvailable") and x["name"].startswith("iPhone")))')"
+          xcodebuild test -project Invoke.xcodeproj -scheme Invoke -configuration Debug -sdk iphonesimulator27.0 \
+            -destination "platform=iOS Simulator,id=$device" -destination-timeout 180 \
+            -parallel-testing-enabled NO -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 240 -maximum-test-execution-time-allowance 300 \
+            -only-testing:InvokeTests/GrimoireStoreTests/testStepProgressDoesNotCreditFullRoutine \
+            -only-testing:InvokeUITests/StorageRecoveryUITests/testCorruptStorageFailsClosedThenRestoresRetainedBackup \
+            -only-testing:InvokeUITests/LivingGrimoireUITests/testSpellMethodAndEchoSourcesRemainEditableAfterReopening \
+            IPHONEOS_DEPLOYMENT_TARGET=17.0 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
