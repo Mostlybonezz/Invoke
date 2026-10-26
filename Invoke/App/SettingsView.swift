@@ -96,7 +96,7 @@ struct SettingsView: View {
                         Text("Export your current collection first. Invoke also creates a local recovery copy before replacing anything.").foregroundStyle(theme.secondary)
                         Button("Export current collection first") { exportAfterReview = true; proposedRestore = nil }.buttonStyle(.bordered).frame(minHeight: 44)
                         Text("After export, choose Restore from backup again to continue.").font(.footnote).foregroundStyle(theme.secondary)
-                        Button("Replace with this backup", role: .destructive) { confirmRestore = true }.buttonStyle(.borderedProminent).frame(minHeight: 44)
+                        Button("Replace with this backup", role: .destructive) { confirmRestore = true }.buttonStyle(.borderedProminent).tint(theme.button).foregroundStyle(theme.buttonText).frame(minHeight: 44)
                     }.padding(24) }.invokeScreen()
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { proposedRestore = nil } } }
                         .alert("Replace your current collection?", isPresented: $confirmRestore) {

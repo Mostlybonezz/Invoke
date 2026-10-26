@@ -73,13 +73,14 @@ struct InvokeRootView: View {
 
 struct StorageRecoveryView: View {
     @EnvironmentObject private var store: AppStore
+    @Environment(\.invokeTheme) private var theme
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Label("Your collection needs attention", systemImage: "externaldrive.badge.exclamationmark").font(.title2).fontDesign(.serif)
                 Text("Invoke could not safely open the saved collection. The existing files have been preserved and ordinary writes are blocked to protect them.")
                 Text("Open recovery to review a retained copy or choose a complete backup from Files. The backup is validated before restoration. If no usable backup is available, keep this installation and its data container for recovery.")
-                NavigationLink { SettingsView() } label: { Label("Open backup recovery", systemImage: "arrow.clockwise.icloud") }.buttonStyle(.borderedProminent).accessibilityIdentifier("storage-open-recovery")
+                NavigationLink { SettingsView() } label: { Label("Open backup recovery", systemImage: "arrow.clockwise.icloud") }.buttonStyle(.borderedProminent).tint(theme.button).foregroundStyle(theme.buttonText).accessibilityIdentifier("storage-open-recovery")
                 Text("Do not delete the app or its LiveContainer data container to resolve this screen.").font(.footnote)
             }.padding(24)
         }.navigationTitle("Recovery").invokeScreen().accessibilityIdentifier("storage-recovery")
