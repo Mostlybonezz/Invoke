@@ -392,7 +392,7 @@ extension AppStore {
     }
     func mergeBackup(_ payload: BackupPayload) throws {
         try BackupValidation.validate(payload)
-        var current = try makeBackup()
+        var current = try makeBackup().payload
         let incoming = payload.data
         func merge<T: Identifiable>(_ from: [T], into to: inout [T]) where T.ID: Hashable {
             let ids = Set(to.map(\.id)); to += from.filter { !ids.contains($0.id) }
