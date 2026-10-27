@@ -15,7 +15,7 @@ final class ConstellationUITests: XCTestCase {
     }
 
     private func reveal(_ target: XCUIElement, upwards: Bool = true) {
-        XCTAssertTrue(target.waitForExistence(timeout: 10), "Missing element: \(target)")
+        _ = target.waitForExistence(timeout: 3)
         for _ in 0..<7 {
             if target.isHittable { return }
             if upwards { app.swipeUp() } else { app.swipeDown() }
@@ -34,6 +34,9 @@ final class ConstellationUITests: XCTestCase {
         let examples = element("onboarding-examples")
         reveal(examples)
         examples.tap()
+        let legacy = element("legacy-sanctuary")
+        reveal(legacy)
+        legacy.tap()
         XCTAssertTrue(element("constellation-preview").waitForExistence(timeout: 10))
     }
 

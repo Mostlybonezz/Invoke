@@ -8,18 +8,21 @@ final class PreferencesCompatibilityTests: XCTestCase {
     func testVersionOneSnapshotPreservesThemeAndWriting() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let original = AppStore(directory: directory)
-        original.data.preferences.theme = "ink"
-        original.data.stories.append(Story(title: "My own story", prose: "Keep every word."))
-        original.flush()
-        let generation = try String(contentsOf: directory.appendingPathComponent("CURRENT"), encoding: .utf8)
-        let snapshot = directory.appendingPathComponent("generations/\(generation)/data.json")
-        var envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: snapshot)) as? [String: Any])
-        var data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        var original = AppData()
+        original.preferences.theme = "ink"
+        original.stories = [Story(title: "My own story", prose: "Keep every word.")]
+        let generation = UUID().uuidString
+        let folder = directory.appendingPathComponent("generations/\(generation)")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("images"), withIntermediateDirectories: true)
+        let snapshot = folder.appendingPathComponent("data.json")
+        var data = try XCTUnwrap(JSONSerialization.jsonObject(with: PersistenceCoding.encoder().encode(original)) as? [String: Any])
+        data["schemaVersion"] = 1; data.removeValue(forKey: "grimoire")
         var preferences = try XCTUnwrap(data["preferences"] as? [String: Any])
         for key in newKeys { preferences.removeValue(forKey: key) }
-        data["preferences"] = preferences; envelope["data"] = data
-        try JSONSerialization.data(withJSONObject: envelope).write(to: snapshot)
+        data["preferences"] = preferences
+        let bytes = try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "writtenAt": 1_700_000_000_000, "data": data])
+        try bytes.write(to: snapshot)
+        try Data(generation.utf8).write(to: directory.appendingPathComponent("CURRENT"))
         let reopened = AppStore(directory: directory)
         XCTAssertNil(reopened.errorMessage)
         XCTAssertEqual(reopened.data.preferences.theme, "ink")
@@ -27,6 +30,7 @@ final class PreferencesCompatibilityTests: XCTestCase {
         XCTAssertEqual(reopened.data.preferences.glassStyle, "system")
         XCTAssertEqual(reopened.data.preferences.effectIntensity, 1)
         XCTAssertEqual(reopened.data.stories.first?.prose, "Keep every word.")
+        XCTAssertEqual(try Data(contentsOf: snapshot), bytes, "Migration retains the exact old preferences and writing.")
     }
 
     func testVersionOneBackupAndNewCustomizationRoundTrip() throws {

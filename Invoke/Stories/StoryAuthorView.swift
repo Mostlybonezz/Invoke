@@ -80,7 +80,7 @@ struct StoryAuthorView: View {
                 HStack {
                     if step > 0 { Button("Back") { story.wrappedValue.authoringStep -= 1 }.frame(minHeight: 44) }
                     Spacer()
-                    if step < 5 { Button("Continue →") { if step == 1 { connectManifestation(story) }; story.wrappedValue.authoringStep += 1 }.buttonStyle(.borderedProminent).frame(minHeight: 44) }
+                    if step < 5 { Button("Continue →") { if step == 1 { connectManifestation(story) }; story.wrappedValue.authoringStep += 1 }.buttonStyle(.borderedProminent).tint(theme.button).foregroundStyle(theme.buttonText).frame(minHeight: 44) }
                 }
                 Divider()
                 DisclosureGroup("Write freely · your authored passage") {

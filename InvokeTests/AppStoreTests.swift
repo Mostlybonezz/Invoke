@@ -4,6 +4,25 @@ import ImageIO
 @testable import Invoke
 
 final class AppStoreTests: XCTestCase {
+    private struct LegacyJSONSnapshot: Encodable {
+        var formatVersion = 1
+        var writtenAt = Date()
+        var data: AppData
+    }
+    /// Construct the pre-SQLite format directly; a new AppStore must not be used
+    /// as a JSON fixture factory now that its ordinary storage is SQLite.
+    private func legacyGeneration(at directory: URL, latest: AppData, previous: AppData? = nil) throws -> URL {
+        let name = UUID().uuidString
+        let folder = directory.appendingPathComponent("generations/\(name)")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("images"), withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("data.json")
+        try PersistenceCoding.encoder().encode(LegacyJSONSnapshot(data: latest)).write(to: file)
+        if let previous {
+            try PersistenceCoding.encoder().encode(LegacyJSONSnapshot(data: previous)).write(to: folder.appendingPathComponent("previous.json"))
+        }
+        try Data(name.utf8).write(to: directory.appendingPathComponent("CURRENT"))
+        return file
+    }
     private func temporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("InvokeTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -172,19 +191,20 @@ final class AppStoreTests: XCTestCase {
     func testDamagedLatestSaveRecoversPreviousSnapshot() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let store = AppStore(directory: directory)
-        store.data.stories.append(Story(title: "Previous version"))
-        store.flush()
-        store.data.stories[0].title = "Latest version"
-        store.flush()
-        let generation = try String(contentsOf: directory.appendingPathComponent("CURRENT"), encoding: .utf8)
-        let latest = directory.appendingPathComponent("generations/\(generation)/data.json")
-        try Data("incomplete".utf8).write(to: latest)
+        var previous = AppData(); previous.stories = [Story(title: "Previous version")]
+        var current = previous; current.stories[0].title = "Latest version"
+        let latest = try legacyGeneration(at: directory, latest: current, previous: previous)
+        let originalPointer = try Data(contentsOf: directory.appendingPathComponent("CURRENT"))
+        let damaged = Data("incomplete".utf8)
+        try damaged.write(to: latest)
         let reopened = AppStore(directory: directory)
         XCTAssertEqual(reopened.data.stories.first?.title, "Previous version")
         XCTAssertNotNil(reopened.errorMessage)
-        let files = try FileManager.default.contentsOfDirectory(atPath: latest.deletingLastPathComponent().path)
-        XCTAssertTrue(files.contains { $0.hasPrefix("damaged-") })
+        XCTAssertEqual(try Data(contentsOf: latest), damaged, "The original damaged generation must remain recoverable.")
+        XCTAssertNotEqual(try Data(contentsOf: directory.appendingPathComponent("CURRENT")), originalPointer)
+        let recovery = try XCTUnwrap(reopened.lastRecoveryBackupURL)
+        XCTAssertEqual(try reopened.validateBackup(Data(contentsOf: recovery)).data.stories.first?.title, "Previous version")
+        XCTAssertEqual(AppStore(directory: directory).data.stories.first?.title, "Previous version")
     }
 
     func testExampleCollectionHasConsistentRelationships() throws {
@@ -247,22 +267,18 @@ final class AppStoreTests: XCTestCase {
     func testFutureLocalSchemaIsPreservedInsteadOfDowngraded() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let store = AppStore(directory: directory)
-        store.data.stories.append(Story(title: "Future writing"))
-        store.flush()
-        let generation = try String(contentsOf: directory.appendingPathComponent("CURRENT"), encoding: .utf8)
-        let latest = directory.appendingPathComponent("generations/\(generation)/data.json")
-        var envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: latest)) as? [String: Any])
-        var futureData = try XCTUnwrap(envelope["data"] as? [String: Any])
-        futureData["schemaVersion"] = 99
-        envelope["data"] = futureData
-        let futureBytes = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
-        try futureBytes.write(to: latest)
+        var future = AppData(); future.schemaVersion = 99
+        future.stories = [Story(title: "Future writing")]
+        let latest = try legacyGeneration(at: directory, latest: future)
+        let futureBytes = try Data(contentsOf: latest)
+        let originalPointer = try Data(contentsOf: directory.appendingPathComponent("CURRENT"))
         let reopened = AppStore(directory: directory)
         XCTAssertNotNil(reopened.errorMessage)
         reopened.data.stories.append(Story(title: "Keep this draft in memory"))
         reopened.flush()
         XCTAssertEqual(try Data(contentsOf: latest), futureBytes)
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("CURRENT")), originalPointer)
+        XCTAssertTrue(reopened.storageRecoveryRequired)
         XCTAssertEqual(reopened.data.stories.first?.title, "Keep this draft in memory")
     }
 }

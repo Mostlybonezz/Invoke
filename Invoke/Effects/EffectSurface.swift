@@ -86,7 +86,7 @@ struct EffectSurface: View {
     var origin: CGPoint = CGPoint(x: 0.5, y: 0.5)
 
     @EnvironmentObject private var store: AppStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @InvokeReducedMotion private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.scenePhase) private var scenePhase

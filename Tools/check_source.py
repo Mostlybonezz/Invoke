@@ -25,7 +25,9 @@ except ImportError:
 definitions = re.findall(r'^\s*([A-F0-9]{24}) = \{ isa = ', project, re.M)
 check(len(definitions) == len(set(definitions)), 'Duplicate project object IDs')
 check(set(re.findall(r'\b[A-F0-9]{24}\b', project)).issubset(set(definitions)), 'Unresolved project object ID')
-swift = sorted((ROOT/'Invoke').rglob('*.swift')) + sorted((ROOT/'InvokeTests').glob('*.swift')) + sorted((ROOT/'InvokeUITests').glob('*.swift'))
+for path in (ROOT/'Tools').rglob('*.sh'):
+    check(b'\r\n' not in path.read_bytes(), f'Shell script requires LF line endings: {path.relative_to(ROOT)}')
+swift = sorted((ROOT/'Invoke').rglob('*.swift')) + sorted((ROOT/'InvokeTests').rglob('*.swift')) + sorted((ROOT/'InvokeUITests').rglob('*.swift'))
 metal = list((ROOT/'Invoke').rglob('*.metal'))
 for path in swift + metal:
     rel = path.relative_to(ROOT).as_posix()
@@ -33,8 +35,14 @@ for path in swift + metal:
     key = hashlib.sha256(('build:' + rel).encode()).hexdigest()[:24].upper()
     check(project.count(key) == 2, f'File not exactly once in compile phase: {rel}')
 
-for path in (ROOT/'Invoke/Resources').glob('*'):
+for path in (ROOT/'Invoke/Resources').rglob('*'):
     if path.suffix in ('.plist', '.xcprivacy'): plistlib.loads(path.read_bytes())
+    if path.suffix == '.json': json.loads(path.read_text(encoding='utf-8'))
+    if path.is_file() and path.name != 'Info.plist' and path.suffix in ('.json', '.xcprivacy', '.txt'):
+        rel = path.relative_to(ROOT).as_posix()
+        check(f'path = "{rel}";' in project, f'Resource missing from project: {rel}')
+        key = hashlib.sha256(('build:' + rel).encode()).hexdigest()[:24].upper()
+        check(project.count(key) == 2, f'Resource not exactly once in resource phase: {rel}')
 for path in (ROOT/'Invoke/Assets.xcassets').rglob('Contents.json'): json.loads(path.read_text())
 ET.parse(ROOT/'Invoke.xcodeproj/xcshareddata/xcschemes/Invoke.xcscheme')
 icon = ROOT/'Invoke/Assets.xcassets/AppIcon.appiconset/Invoke.png'
@@ -64,7 +72,7 @@ try:
 except ImportError:
     pass
 
-test_count = sum(len(re.findall(r'func test\w+\(', p.read_text())) for folder in ['InvokeTests', 'InvokeUITests'] for p in (ROOT/folder).glob('*.swift'))
+test_count = sum(len(re.findall(r'func\s+test\w+\s*\(', p.read_text())) for folder in ['InvokeTests', 'InvokeUITests'] for p in (ROOT/folder).rglob('*.swift'))
 print(f'Package checks: {len(swift)} Swift files, {len(metal)} Metal file(s), {test_count} authored XCTest methods.')
 print('Swift syntax: ' + syntax)
 print('Swift compilation, Metal compilation, simulator/device testing, and XCTest execution: NOT RUN.')

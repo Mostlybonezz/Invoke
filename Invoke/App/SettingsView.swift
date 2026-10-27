@@ -9,8 +9,12 @@ struct SettingsView: View {
     @State private var exporting = false
     @State private var importing = false
     @State private var validating = false
-    @State private var proposedRestore: BackupPayload?
-    @State private var reviewRestore = false
+    private struct RestoreProposal: Identifiable {
+        let id = UUID()
+        let payload: BackupPayload
+        let mergePreview: String
+    }
+    @State private var proposedRestore: RestoreProposal?
     @State private var confirmRestore = false
     @State private var removeExamples = false
     @State private var exportMessage = ""
@@ -19,17 +23,30 @@ struct SettingsView: View {
         Form {
             Section {
                 NavigationLink { AppearanceView() } label: { Label("Appearance", systemImage: "paintpalette") }
+                NavigationLink { LivingSettingsView(settings: store.data.grimoire.settings) } label: { Label("Calendar, reminders & restoration", systemImage: "calendar.badge.clock") }.accessibilityIdentifier("living-settings")
                 Text("\(theme.name) · \(store.data.preferences.effects.capitalized) effects").foregroundStyle(theme.secondary)
                     .accessibilityIdentifier("appearance-current-theme").accessibilityValue(theme.id)
             }
             Section("Your writing, on this iPhone") {
                 Label(store.saveState, systemImage: "internaldrive")
+                if !store.storageRecoveryRequired { Text("\(store.historyCounts.actions) action records · \(store.historyCounts.revisions) recorded revisions").font(.footnote).foregroundStyle(theme.secondary) }
                 Text("Invoke works offline. It does not use an account, analytics, an AI service, or cloud synchronization. Writing and imported photographs are stored in the app’s protected local storage.")
                 Text("Deleting Invoke can delete its local data. Export a complete backup regularly to a location you choose in Files. Device backups depend on your iPhone settings.").font(.footnote).foregroundStyle(theme.secondary)
                 Button { exportBackup() } label: { Label("Export complete backup", systemImage: "square.and.arrow.up") }
                 Button { importing = true } label: { Label(validating ? "Validating backup…" : "Restore from backup", systemImage: "square.and.arrow.down") }.disabled(validating)
                 if !exportMessage.isEmpty { Text(exportMessage).font(.footnote).foregroundStyle(theme.secondary) }
-                if let url = store.lastRecoveryBackupURL { ShareLink(item: url) { Label("Save pre-restore recovery copy", systemImage: "arrow.uturn.backward") } }
+                if let url = store.lastRecoveryBackupURL {
+                    ShareLink(item: url) { Label("Save retained recovery copy", systemImage: "arrow.uturn.backward") }
+                    Button("Review retained recovery copy") { validateImport(url) }.accessibilityIdentifier("recovery-review-copy")
+                }
+                if store.recoveryBackupURLs.count > 1 {
+                    DisclosureGroup("Other retained recovery copies") {
+                        ForEach(store.recoveryBackupURLs.dropFirst(), id: \.self) { url in
+                            Button("Review \(url.lastPathComponent)") { validateImport(url) }
+                        }
+                    }
+                }
+                Button("Find retained recovery copies") { store.presentGrimoireError { try store.refreshRecoveryBackups() } }
                 Button("Retry saving now") { store.flush() }
             }
             Section("Example collection") {
@@ -57,31 +74,38 @@ struct SettingsView: View {
                 case .failure(let error): store.errorMessage = "Could not open the backup: \(error.localizedDescription)"
                 }
             }
-            .sheet(isPresented: $reviewRestore, onDismiss: {
+            .sheet(item: $proposedRestore, onDismiss: {
                 if exportAfterReview { exportAfterReview = false; exportBackup() }
-            }) {
+            }) { proposal in
+                let payload = proposal.payload
                 NavigationStack {
                     ScrollView { VStack(alignment: .leading, spacing: 22) {
-                        Text("Review this restoration").font(.largeTitle).fontDesign(.serif)
-                        if let payload = proposedRestore {
+                        Text("Review this restoration").font(.largeTitle).fontDesign(.serif).accessibilityIdentifier("recovery-review-title")
+                        Group {
                             Text("Backup from \(payload.exportedAt.formatted(date: .abbreviated, time: .shortened))")
                             Text("\(payload.data.stories.count) stories · \(payload.data.entries.count) Grimoire entries · \(payload.data.relics.count) relics · \(payload.images.count) images")
+                            Text("\(payload.data.grimoire.practices.count) practices · \(payload.data.grimoire.actions.count) action records · \(payload.data.grimoire.invocations.count) Invocations · \(payload.data.grimoire.assets.count) assets")
+                            Text("\(payload.data.grimoire.spells.count) Spells · \(payload.data.grimoire.enchantments.count) Enchantments · \(payload.data.grimoire.arcana.count) Arcana records · \(payload.data.grimoire.echoes.count) Echoes · \(payload.data.grimoire.revisions.count) revisions")
+                            Text(proposal.mergePreview).font(.footnote).foregroundStyle(theme.secondary)
+                            Button("Merge new records into my collection") {
+                                do { try store.mergeBackup(payload); proposedRestore = nil; exportMessage = "Merged new records. Existing records and preferences were kept." }
+                                catch { store.errorMessage = error.localizedDescription }
+                            }.buttonStyle(.bordered).frame(minHeight: 44).disabled(store.storageRecoveryRequired)
                         }
-                        Text("Restoring replaces all current stories, entries, relics, photos, reflections, and appearance preferences with this backup. This is a replacement, not a merge.")
+                        Text("Merge adds records with new identities and keeps your current records on every identity conflict. Current preferences are kept. Replace instead restores the complete backup, including all records, history, photos, and preferences.")
                         Text("Export your current collection first. Invoke also creates a local recovery copy before replacing anything.").foregroundStyle(theme.secondary)
-                        Button("Export current collection first") { exportAfterReview = true; reviewRestore = false }.buttonStyle(.bordered).frame(minHeight: 44)
+                        Button("Export current collection first") { exportAfterReview = true; proposedRestore = nil }.buttonStyle(.bordered).frame(minHeight: 44)
                         Text("After export, choose Restore from backup again to continue.").font(.footnote).foregroundStyle(theme.secondary)
-                        Button("Replace with this backup", role: .destructive) { confirmRestore = true }.buttonStyle(.borderedProminent).frame(minHeight: 44)
+                        Button("Replace with this backup", role: .destructive) { confirmRestore = true }.buttonStyle(.borderedProminent).tint(theme.button).foregroundStyle(theme.buttonText).frame(minHeight: 44)
                     }.padding(24) }.invokeScreen()
-                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { reviewRestore = false; proposedRestore = nil } } }
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { proposedRestore = nil } } }
                         .alert("Replace your current collection?", isPresented: $confirmRestore) {
                             Button("Replace & restore", role: .destructive) {
-                                guard let payload = proposedRestore else { return }
-                                do { try store.restore(payload); reviewRestore = false; proposedRestore = nil; exportMessage = store.lastRecoveryBackupURL == nil ? "Restored. The previous local files were preserved for recovery." : "Restored. A pre-restore recovery backup is available below." }
-                                catch { reviewRestore = false; store.errorMessage = error.localizedDescription }
+                                do { try store.restore(payload); proposedRestore = nil; exportMessage = store.lastRecoveryBackupURL == nil ? "Restored. The previous local files were preserved for recovery." : "Restored. A pre-restore recovery backup is available below." }
+                                catch { proposedRestore = nil; store.errorMessage = error.localizedDescription }
                             }
                             Button("Cancel", role: .cancel) { }
-                        } message: { Text("The validated backup will replace the current collection. A recovery backup is saved first.") }
+                        } message: { Text(store.storageRecoveryRequired ? "The validated backup will replace the unreadable collection. Its original files remain available for recovery." : "The validated backup will replace the current collection. A recovery backup is saved first.") }
                 }.environment(\.invokeTheme, theme).preferredColorScheme(theme.scheme)
             }
             .confirmationDialog("Remove all example records?", isPresented: $removeExamples, titleVisibility: .visible) {
@@ -91,6 +115,16 @@ struct SettingsView: View {
     private func exportBackup() {
         do { backup = try store.makeBackup(); exporting = true }
         catch { store.errorMessage = error.localizedDescription }
+    }
+    private func mergeSummary(_ payload: BackupPayload) throws -> String {
+        func overlap<T: Identifiable>(_ current: [T], _ incoming: [T]) -> Int where T.ID: Hashable { Set(current.map(\.id)).intersection(Set(incoming.map(\.id))).count }
+        let a = store.data, b = payload.data
+        var counts = [overlap(a.stories, b.stories), overlap(a.chapters, b.chapters), overlap(a.scenes, b.scenes), overlap(a.entries, b.entries), overlap(a.relics, b.relics), overlap(a.reflections, b.reflections), overlap(a.ritualLogs, b.ritualLogs)]
+        let x = a.grimoire, y = b.grimoire
+        counts += [overlap(x.practices, y.practices), overlap(x.invocations, y.invocations), overlap(x.spells, y.spells), overlap(x.enchantments, y.enchantments), overlap(x.assets, y.assets), overlap(x.arcana, y.arcana), overlap(x.echoes, y.echoes), overlap(x.events, y.events)]
+        counts.append(try store.historyConflictCount(actionIDs: y.actions.map(\.id), occurrenceIDs: y.occurrences.map(\.id), revisionIDs: y.revisions.map(\.id)))
+        let duplicates = counts.reduce(0, +)
+        return "Merge preview: \(duplicates) record identities already exist here and will keep their current values. Conflicting image contents are rejected before anything changes. A recovery copy is saved before import."
     }
     private func validateImport(_ url: URL) {
         validating = true
@@ -103,7 +137,8 @@ struct SettingsView: View {
                     guard size <= BackupValidation.maximumBackupBytes else { throw InvokeDataError.invalidBackup("The selected file exceeds the 512 MB limit.") }
                     return try BackupValidation.decode(Data(contentsOf: url, options: .mappedIfSafe))
                 }.value
-                proposedRestore = payload; reviewRestore = true
+                let mergePreview = store.storageRecoveryRequired ? "The current collection could not be read safely, so merge is unavailable. You can restore this validated backup while preserving the damaged generation for recovery." : try mergeSummary(payload)
+                proposedRestore = RestoreProposal(payload: payload, mergePreview: mergePreview)
             } catch { store.errorMessage = error.localizedDescription }
             validating = false
         }
@@ -113,7 +148,7 @@ struct SettingsView: View {
 struct AppearanceView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.invokeTheme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @InvokeReducedMotion private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var previewTrigger = 0

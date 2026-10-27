@@ -3,12 +3,18 @@ import SwiftUI
 @main
 struct InvokeApp: App {
     @StateObject private var store: AppStore
+    @StateObject private var reminders = ReminderCoordinator()
     @Environment(\.scenePhase) private var scenePhase
     init() {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("InvokeUITests-\(UUID().uuidString)")
-            _store = StateObject(wrappedValue: AppStore(directory: directory))
+            let prefix = "--ui-testing-session="
+            let supplied = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(prefix) }).flatMap { UUID(uuidString: String($0.dropFirst(prefix.count))) }
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("InvokeUITests-\((supplied ?? UUID()).uuidString)")
+            try? AppStore.prepareLivingGrimoireUITestStorage(at: directory)
+            let testStore = AppStore(directory: directory)
+            testStore.installLivingGrimoireUITestFixtureIfRequested()
+            _store = StateObject(wrappedValue: testStore)
             return
         }
         #endif
@@ -16,13 +22,19 @@ struct InvokeApp: App {
     }
     var body: some SwiftUI.Scene {
         WindowGroup {
-            InvokeRootView().environmentObject(store)
+            InvokeRootView().environmentObject(store).environmentObject(reminders)
+                .uiTestingDynamicType()
                 .environment(\.invokeTheme, InvokeTheme.named(store.data.preferences.theme))
+                .environment(\.invokeMotionDisabled, !store.data.grimoire.settings.motionEnabled)
                 .preferredColorScheme(InvokeTheme.named(store.data.preferences.theme).scheme)
                 .tint(InvokeTheme.named(store.data.preferences.theme).accent)
                 .onChange(of: scenePhase) { _, phase in
                     if phase != .active { store.flush() }
+                    else { reminders.schedule(store: store) }
                 }
+                .onChange(of: store.data.grimoire) { _, _ in reminders.schedule(store: store) }
+                .onChange(of: store.historyRevision) { _, _ in reminders.schedule(store: store) }
+                .task { reminders.schedule(store: store) }
         }
     }
 }
@@ -32,23 +44,46 @@ struct InvokeRootView: View {
     @Environment(\.invokeTheme) private var theme
     @State private var tab = 0
     var body: some View {
+        Group {
+        if store.storageRecoveryRequired {
+            NavigationStack { StorageRecoveryView() }
+        } else {
         TabView(selection: $tab) {
-            NavigationStack { SanctuaryView() }.tabItem { Label("Sanctuary", systemImage: "sparkle") }.tag(0)
-            NavigationStack { StoriesView() }.tabItem { Label("Stories", systemImage: "book") }.tag(1)
-            NavigationStack { GrimoireView() }.tabItem { Label("Grimoire", systemImage: "moon") }.tag(2)
-            NavigationStack { RelicCabinetView() }.tabItem { Label("Relic Cabinet", systemImage: "sparkles.rectangle.stack") }.tag(3)
+            NavigationStack { TodayView() }.tabItem { Label("Today", systemImage: "sparkle") }.tag(0)
+            NavigationStack { QuestsView() }.tabItem { Label("Quests", systemImage: "checklist") }.tag(1)
+            NavigationStack { LivingGrimoireView() }.tabItem { Label("Grimoire", systemImage: "book.closed") }.tag(2)
+            NavigationStack { InvocationsView() }.tabItem { Label("Invocations", systemImage: "sparkles") }.tag(3)
+            NavigationStack { ChronicleView() }.tabItem { Label("Chronicle", systemImage: "clock.arrow.circlepath") }.tag(4)
+        }
+        }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if store.saveState != "Saved on this iPhone" {
+            if !store.storageRecoveryRequired && store.saveState != "Saved on this iPhone" {
                 HStack(spacing: 8) { Image(systemName: store.errorMessage == nil ? "arrow.triangle.2.circlepath" : "exclamationmark.triangle"); Text(store.saveState).font(.caption); if store.errorMessage != nil { Button("Retry saving") { store.flush() }.font(.caption) } }.padding(8).frame(maxWidth: .infinity).foregroundStyle(theme.text).background(theme.surface)
             }
         }
-        .sheet(isPresented: Binding(get: { !store.data.preferences.onboardingComplete }, set: { _ in })) {
-            OnboardingView().interactiveDismissDisabled().environment(\.invokeTheme, theme).preferredColorScheme(theme.scheme)
+        .sheet(isPresented: Binding(get: { !store.storageRecoveryRequired && (!store.data.preferences.onboardingComplete || !store.data.grimoire.upgradeIntroductionSeen) }, set: { _ in })) {
+            NavigationStack { LivingSetupView(isUpgrade: store.data.preferences.onboardingComplete) }.interactiveDismissDisabled().environment(\.invokeTheme, theme).preferredColorScheme(theme.scheme)
         }
         .alert("Your writing matters", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("OK") { store.errorMessage = nil }
         } message: { Text(store.errorMessage ?? "") }
+    }
+}
+
+struct StorageRecoveryView: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.invokeTheme) private var theme
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Label("Your collection needs attention", systemImage: "externaldrive.badge.exclamationmark").font(.title2).fontDesign(.serif)
+                Text("Invoke could not safely open the saved collection. The existing files have been preserved and ordinary writes are blocked to protect them.")
+                Text("Open recovery to review a retained copy or choose a complete backup from Files. The backup is validated before restoration. If no usable backup is available, keep this installation and its data container for recovery.")
+                NavigationLink { SettingsView() } label: { Label("Open backup recovery", systemImage: "arrow.clockwise.icloud") }.buttonStyle(.borderedProminent).tint(theme.button).foregroundStyle(theme.buttonText).accessibilityIdentifier("storage-open-recovery")
+                Text("Do not delete the app or its LiveContainer data container to resolve this screen.").font(.footnote)
+            }.padding(24)
+        }.navigationTitle("Recovery").invokeScreen().accessibilityIdentifier("storage-recovery")
     }
 }
 
